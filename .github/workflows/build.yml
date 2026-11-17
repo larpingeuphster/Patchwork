@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - name: Build Patchwork.exe
+        run: pyinstaller packaging/patchwork.spec --noconfirm
+      - name: Self-check the packaged exe
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Patchwork.exe -ArgumentList '--self-check', "$PWD\selfcheck.txt" -Wait -PassThru
+          Get-Content selfcheck.txt
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Patchwork-windows
+          path: dist/Patchwork.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Patchwork-windows
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: Patchwork.exe
+          generate_release_notes: true

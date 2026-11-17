@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "patchwork"
+version = "0.1.0"
+description = "Swap Roblox assets (textures, sounds, meshes) on your own PC."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["mitmproxy>=12.1,<13"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyinstaller>=6.10"]
+
+[project.gui-scripts]
+patchwork = "patchwork.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["patchwork*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
