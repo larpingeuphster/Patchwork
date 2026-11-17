@@ -12,12 +12,14 @@ import asyncio
 import json
 import logging
 import re
+import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from . import rules
-from .config import Config
+from .config import KIND_URL, Config
+from .downloads import DownloadError, Downloads
 
 log = logging.getLogger("patchwork")
 
@@ -41,6 +43,10 @@ def ensure_ca(app_dir: Path) -> str:
     return (directory / f"{CA_BASENAME}-ca-cert.pem").read_text(encoding="ascii")
 
 
+def downloads_dir(app_dir: Path) -> Path:
+    return app_dir / "downloads"
+
+
 def host_pattern(host: str) -> str:
     return rf"^{re.escape(host.strip().lower())}(:\d+)?$"
 
@@ -48,8 +54,14 @@ def host_pattern(host: str) -> str:
 class SwapAddon:
     """mitmproxy addon that applies the swap table to asset-delivery traffic."""
 
-    def __init__(self, config: Config, on_hit: Callable[[rules.Hit], None] | None = None):
+    def __init__(
+        self,
+        config: Config,
+        on_hit: Callable[[rules.Hit], None] | None = None,
+        downloads_dir: Path | None = None,
+    ):
         self.on_hit = on_hit or (lambda hit: None)
+        self.downloads = Downloads(downloads_dir or Path(tempfile.gettempdir()) / "patchwork-downloads")
         self.set_config(config)
 
     def set_config(self, config: Config) -> None:
@@ -67,7 +79,36 @@ class SwapAddon:
             except Exception:  # never let the UI break the proxy
                 log.exception("hit callback failed")
 
-    def request(self, flow) -> None:
+    async def prefetch(self) -> None:
+        """Download every web-link swap ahead of time and report broken links."""
+        for swap in self.table.url_swaps():
+            try:
+                await self.downloads.get(swap.value)
+            except DownloadError as exc:
+                log.warning("Couldn't download %s for %s: %s", swap.value, swap.name, exc)
+
+    async def _serve(self, flow, swap) -> bool:
+        """Answer ``flow`` with the replacement file for ``swap``. False if unavailable."""
+        from mitmproxy import http
+
+        if swap.kind == KIND_URL:
+            try:
+                path = await self.downloads.get(swap.value)
+            except DownloadError as exc:
+                log.warning("Couldn't download the replacement for %s: %s", swap.name, exc)
+                return False
+            ctype = rules.content_type_for(Path(swap.value.split("?", 1)[0]))
+        else:
+            path = Path(swap.value)
+            if not path.is_file():
+                log.warning("Replacement file missing for %s: %s", swap.name, path)
+                return False
+            ctype = rules.content_type_for(path)
+        data = await asyncio.to_thread(path.read_bytes)
+        flow.response = http.Response.make(200, data, {"Content-Type": ctype})
+        return True
+
+    async def request(self, flow) -> None:
         if not self._ours(flow):
             return
         from mitmproxy import http
@@ -77,14 +118,9 @@ class SwapAddon:
 
         if path.startswith(rules.FILE_PREFIX):
             token = path[len(rules.FILE_PREFIX) :].split("?", 1)[0]
-            file = self.table.file_for_token(token)
-            if file is None or not file.is_file():
-                flow.response = http.Response.make(404, b"Patchwork: replacement file not found")
-                log.warning("Replacement file missing: %s", file)
-                return
-            flow.response = http.Response.make(
-                200, file.read_bytes(), {"Content-Type": rules.content_type_for(file)}
-            )
+            swap = self.table.served_for_token(token)
+            if swap is None or not await self._serve(flow, swap):
+                flow.response = http.Response.make(404, b"Patchwork: replacement not available")
             return
 
         if len(self.table) == 0:
@@ -110,13 +146,8 @@ class SwapAddon:
             if decision.new_path is not None:
                 req.path = decision.new_path
             elif decision.serve_file:
-                file = Path(decision.swap.value)
-                if not file.is_file():
-                    log.warning("Replacement file missing: %s", file)
+                if not await self._serve(flow, decision.swap):
                     return
-                flow.response = http.Response.make(
-                    200, file.read_bytes(), {"Content-Type": rules.content_type_for(file)}
-                )
             elif decision.rewrite_json:
                 flow.metadata["patchwork_single_file"] = decision.swap.value
             self._report([decision.hit])
@@ -185,7 +216,7 @@ class ProxyRunner:
         self.app_dir = app_dir
         self.config = config
         self.mode = mode  # tests use a regular proxy; the app uses local redirect mode
-        self.addon = SwapAddon(config, on_hit)
+        self.addon = SwapAddon(config, on_hit, downloads_dir(app_dir))
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="patchwork-proxy", daemon=True)
         self._thread.start()
@@ -211,6 +242,8 @@ class ProxyRunner:
     def update_config(self, config: Config) -> None:
         self.config = config
         self.addon.set_config(config)
+        if self.running:
+            asyncio.run_coroutine_threadsafe(self.addon.prefetch(), self._loop)
 
     def start(self, timeout: float = 180.0) -> None:
         """Start intercepting. Raises RuntimeError with a readable reason on failure.
@@ -262,6 +295,7 @@ class ProxyRunner:
             reason = self._errors[0] if self._errors else "The proxy stopped during startup."
             await self._stop()
             raise RuntimeError(reason)
+        self._prefetch_task = asyncio.create_task(self.addon.prefetch())
 
     async def _stop(self) -> None:
         m, task = self._master, self._run_task

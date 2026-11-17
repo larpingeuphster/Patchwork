@@ -1,0 +1,77 @@
+{
+  "replacement_rules": [
+    {
+      "name": "Crosshair left",
+      "replace_ids": [
+        1001
+      ],
+      "mode": "cdn",
+      "enabled": true,
+      "cdn_url": "https://files.example.com/left.webp"
+    },
+    {
+      "name": "Crosshair right",
+      "replace_ids": [
+        1002
+      ],
+      "mode": "cdn",
+      "enabled": true,
+      "cdn_url": "https://files.example.com/right.webp"
+    },
+    {
+      "name": "Logo",
+      "replace_ids": [
+        1003
+      ],
+      "mode": "cdn",
+      "enabled": true,
+      "cdn_url": "https://files.example.com/logo.webp"
+    },
+    {
+      "name": "All heads",
+      "replace_ids": [
+        2001,
+        2002
+      ],
+      "mode": "id",
+      "enabled": true,
+      "with_id": 70643163489676
+    },
+    {
+      "name": "Spark removal",
+      "replace_ids": [
+        2003
+      ],
+      "mode": "id",
+      "enabled": false,
+      "with_id": 109303978243933
+    },
+    {
+      "name": "Dark arena",
+      "replace_ids": [
+        3001
+      ],
+      "mode": "cdn",
+      "enabled": true,
+      "cdn_url": "https://raw.githubusercontent.com/example/resources/main/arena.png"
+    },
+    {
+      "name": "Hitmarker",
+      "replace_ids": [
+        3002
+      ],
+      "mode": "cdn",
+      "enabled": true,
+      "cdn_url": "https://raw.githubusercontent.com/example/resources/main/hit.ogg"
+    },
+    {
+      "name": "Music",
+      "replace_ids": [
+        3003
+      ],
+      "mode": "cdn",
+      "enabled": true,
+      "cdn_url": "https://files.example.com/song.mp3"
+    }
+  ]
+}

@@ -8,12 +8,14 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 CONFIG_VERSION = 1
 
-KIND_ASSET = "asset"
-KIND_FILE = "file"
-KINDS = (KIND_ASSET, KIND_FILE)
+KIND_ASSET = "asset"  # replace with another Roblox asset ID
+KIND_FILE = "file"  # replace with a file on this PC
+KIND_URL = "url"  # replace with a file downloaded from a web link
+KINDS = (KIND_ASSET, KIND_FILE, KIND_URL)
 
 DEFAULT_INTERCEPT_HOSTS = ["assetdelivery.roblox.com"]
 DEFAULT_PROCESSES = ["RobloxPlayerBeta.exe"]
@@ -56,12 +58,20 @@ class Swap:
         if self.kind == KIND_ASSET:
             if not self.value.isdigit() or int(self.value) <= 0:
                 raise ValueError("The replacement asset ID must be a positive number")
+        elif self.kind == KIND_URL:
+            parsed = urlparse(self.value)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError("The replacement link must start with https:// or http://")
         elif not self.value:
             raise ValueError("Choose a replacement file")
 
     def describe(self) -> str:
         if self.kind == KIND_ASSET:
             return f"asset {self.value}"
+        if self.kind == KIND_URL:
+            parsed = urlparse(self.value)
+            name = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+            return f"{parsed.netloc}/{name}" if name else parsed.netloc
         return Path(self.value).name
 
 
@@ -110,3 +120,44 @@ def parse_asset_ids(text: str) -> list[int]:
             raise ValueError(f"No asset ID found in {raw!r}")
         ids.append(int(match.group(1)))
     return ids
+
+
+_ASSET_ID_INPUT = re.compile(r"(?:rbxassetid://)?(\d+)", re.IGNORECASE)
+
+
+def swap_from_inputs(
+    name: str, ids_text: str, replace_text: str, configs_dir: Path, enabled: bool = True
+) -> Swap:
+    """Build a swap from the editor's three boxes, working out the kind from "Replace with".
+
+    "Replace with" takes an asset ID (or rbxassetid:// or a roblox.com link), a
+    web link, a file path, or a path inside the configs folder written as
+    ``/Folder/file.png``.
+    """
+    if not ids_text.strip():
+        raise ValueError("Enter at least one asset ID to replace.")
+    targets = parse_asset_ids(ids_text)
+    value = replace_text.strip().strip('"').strip()
+    if not value:
+        raise ValueError("Enter what to replace them with: an asset ID, a link, or a file.")
+
+    if match := _ASSET_ID_INPUT.fullmatch(value):
+        kind, value = KIND_ASSET, match.group(1)
+    elif value.lower().startswith(("http://", "https://")):
+        host = urlparse(value).netloc.lower().split(":")[0]
+        if host == "roblox.com" or host.endswith(".roblox.com"):
+            kind, value = KIND_ASSET, str(parse_asset_ids(value)[0])
+        else:
+            kind = KIND_URL
+    else:
+        path = Path(value)
+        inside = configs_dir / value.lstrip("/\\")
+        if value.startswith(("/", "\\")) and inside.is_file():
+            path = inside
+        if not path.is_file():
+            raise ValueError(f"Couldn't find the file {value}")
+        kind, value = KIND_FILE, str(path.resolve())
+
+    if not name.strip():
+        name = Swap(name="x", targets=targets, kind=kind, value=value).describe()
+    return Swap(name=name.strip(), targets=targets, kind=kind, value=value, enabled=enabled)

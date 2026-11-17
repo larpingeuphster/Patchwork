@@ -40,15 +40,34 @@ To read Roblox's encrypted asset lookups, Patchwork needs Roblox to trust a cert
 
 ## Use
 
-1. Press **Add swap**:
-   - Paste the asset ID(s) to replace. Plain IDs, `rbxassetid://` and Roblox links all work.
-   - Choose what to replace them with: another asset ID, or a file.
-2. Press **Start**.
-3. Open Roblox, or close it and open it again if it was already running.
+The **Replacer** tab works with profiles. A profile is a named list of swaps, for example "Skyboxes" or "Hit sounds". Edit one profile at a time, and switch on as many as you like.
 
-Swaps you add or change while Patchwork is running apply to assets Roblox downloads afterwards.
+1. Pick a profile under **Editing**, or press **New** to make one.
+2. Fill in the form under the swap list and press **Add New**:
+   - **Asset IDs:** the IDs to replace. Plain IDs, `rbxassetid://` and Roblox links all work.
+   - **Replace with:** another asset ID, a direct web link to a file, or a file on your PC (**Browse…**). Patchwork works out which one you typed.
+3. Tick the profile under **Enabled**.
+4. Press **Start**, then open Roblox (or close it and open it again).
 
-Roblox keeps assets it has already downloaded. If a swap doesn't show up, close Roblox, press **Clear Roblox cache**, and join again. Do the same after turning a swap off.
+Other controls:
+- **Load Selected** copies a swap into the form, and **Update Selected** saves your edits back to it. Double-clicking a row loads it too.
+- **On / Off** and **Remove** act on the selected rows.
+- **Ctrl+Z** undoes the last change.
+- The **Activity** tab shows every swap as Roblox loads it.
+
+Roblox keeps assets it has already downloaded. If a swap doesn't show up, close Roblox, press **Clear Cache**, and join again. Do the same after turning a swap off.
+
+### Web links
+
+For a link, Patchwork downloads the file once and keeps a copy in `%APPDATA%\Patchwork\downloads`. Roblox gets the file from Patchwork, so it only ever talks to its own servers. **Settings → Clear downloaded files** fetches every link fresh.
+
+### Presets and Fleasion files
+
+- **Import…** loads a preset, either a Patchwork preset or a Fleasion config with `replacement_rules`, as a new profile. Patchwork asks first if the preset downloads files from the web.
+- From Fleasion configs, Patchwork reads the `id` and `cdn` modes. Rules using other modes are listed as skipped.
+- **Export…** saves the profile you're editing, as a Patchwork preset or a Fleasion preset. Fleasion presets can't point at files on your PC, so those swaps are left out.
+- Each profile is a `.json` file in `%APPDATA%\Patchwork\configs` (**Open Configs**). You can drop preset files straight into that folder; they show up next time Patchwork starts.
+- Replacement files kept in a subfolder there, such as `configs\Sky\up.png`, are saved as `/Sky/up.png`. A profile and its files can then be shared as one folder.
 
 ### Replacement files
 
@@ -56,18 +75,16 @@ Use the format Roblox expects for that asset type:
 
 | Asset | File |
 | --- | --- |
-| Image / texture / skybox face | `.png` or `.jpg` |
+| Image / texture / skybox face | `.png`, `.jpg` or `.webp` |
 | Sound | `.ogg` or `.mp3` |
 | Mesh | Roblox `.mesh` |
 
 You need the **image** ID of a texture or decal, not the decal's own ID.
 
-### Settings file
+### Settings
 
-Swaps are stored in `%APPDATA%\Patchwork\config.json`. Two advanced settings live there too:
-
-- `intercept_hosts`: which hosts are decrypted.
-- `processes`: which programs are captured. Add `"RobloxStudioBeta.exe"` to use Patchwork with Studio.
+- To swap assets in Roblox Studio too, tick it on the **Settings** tab.
+- `%APPDATA%\Patchwork\settings.json` also holds `intercept_hosts`, the hosts Patchwork decrypts. Leave it alone unless you know you need it.
 
 ## Supported installs
 
@@ -119,7 +136,10 @@ Every push runs `.github/workflows/build.yml`, which tests Patchwork on Linux an
 | `patchwork/rules.py` | Rewrites asset-delivery requests and responses (no mitmproxy dependency) |
 | `patchwork/proxy.py` | The mitmproxy addon and the background proxy runner |
 | `patchwork/roblox.py` | Finds Roblox installs, adds and removes the certificate, clears the cache |
-| `patchwork/config.py` | The swap list and settings |
+| `patchwork/config.py` | The swap model and "Replace with" detection |
+| `patchwork/profiles.py` | Profiles in `configs/`, settings, undo |
+| `patchwork/presets.py` | Patchwork and Fleasion preset import/export |
+| `patchwork/downloads.py` | Download cache for web-link swaps |
 | `patchwork/gui.py` | The desktop window |
 
 ## License

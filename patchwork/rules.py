@@ -8,8 +8,9 @@ the CDN URL to download from. Patchwork swaps assets at that step:
 
 * an "asset" swap changes the requested ID, so Roblox downloads the
   replacement asset instead;
-* a "file" swap keeps the request but points the answer at a URL on the same
-  host under ``/patchwork/file/``, which the addon answers from disk.
+* a "file" or "url" swap keeps the request but points the answer at a URL on
+  the same host under ``/patchwork/file/``, which the addon answers from disk
+  (downloading web links first, so Roblox only ever talks to its own servers).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
 
-from .config import KIND_ASSET, KIND_FILE, Swap
+from .config import KIND_ASSET, Swap
 
 FILE_PREFIX = "/patchwork/file/"
 
@@ -37,6 +38,7 @@ _EXTRA_TYPES = {
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
     ".png": "image/png",
+    ".webp": "image/webp",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".tga": "image/x-tga",
@@ -67,15 +69,15 @@ class SwapTable:
 
     def __init__(self, swaps: list[Swap]):
         self._by_id: dict[int, Swap] = {}
-        self._files: dict[str, Path] = {}
+        self._served: dict[str, Swap] = {}
         for swap in swaps:
             if not swap.enabled:
                 continue
             for target in swap.targets:
                 # Earlier swaps win if two swaps claim the same asset.
                 self._by_id.setdefault(target, swap)
-            if swap.kind == KIND_FILE:
-                self._files[file_token(swap.value)] = Path(swap.value)
+            if swap.kind != KIND_ASSET:
+                self._served.setdefault(file_token(swap.value), swap)
 
     def __len__(self) -> int:
         return len(self._by_id)
@@ -83,16 +85,21 @@ class SwapTable:
     def lookup(self, asset_id: int) -> Swap | None:
         return self._by_id.get(asset_id)
 
-    def file_for_token(self, token: str) -> Path | None:
-        return self._files.get(token)
+    def served_for_token(self, token: str) -> Swap | None:
+        """The file or link swap that a ``/patchwork/file/<token>`` URL stands for."""
+        return self._served.get(token)
+
+    def url_swaps(self) -> list[Swap]:
+        return [s for s in self._served.values() if s.kind != KIND_ASSET and s.value.startswith("http")]
 
 
-def file_token(path: str) -> str:
-    return hashlib.sha256(str(Path(path)).encode("utf-8")).hexdigest()[:24]
+def file_token(source: str) -> str:
+    """Short stable name for a replacement file path or link."""
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:24]
 
 
-def file_url(host: str, path: str) -> str:
-    return f"https://{host}{FILE_PREFIX}{file_token(path)}"
+def file_url(host: str, source: str) -> str:
+    return f"https://{host}{FILE_PREFIX}{file_token(source)}"
 
 
 def _as_asset_id(value: object) -> int | None:

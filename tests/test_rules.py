@@ -18,7 +18,7 @@ def test_table_lookup(tmp_path):
     assert t.lookup(100).value == "900"  # first swap wins
     assert t.lookup(300) is None  # disabled
     assert t.lookup(5) is None
-    assert t.file_for_token(rules.file_token(str(tmp_path / "hit.ogg"))) == tmp_path / "hit.ogg"
+    assert t.served_for_token(rules.file_token(str(tmp_path / "hit.ogg"))).name == "Hit"
 
 
 def test_batch_round_trip(tmp_path):

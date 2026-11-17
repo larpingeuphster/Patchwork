@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -38,7 +39,7 @@ def test_batch_flow(tmp_path):
             {"requestId": "a", "assetId": 100},
             {"requestId": "b", "assetId": 200},
         ])
-        addon.request(f)
+        asyncio.run(addon.request(f))
         assert json.loads(f.request.get_text())[0]["assetId"] == 900
         assert [h.asset_id for h in hits] == [100, 200]
 
@@ -54,7 +55,7 @@ def test_batch_flow(tmp_path):
 
         # Roblox then downloads the file URL, which Patchwork answers from disk.
         f2 = flow("GET", file_url.split(HOST, 1)[1])
-        addon.request(f2)
+        asyncio.run(addon.request(f2))
         assert f2.response.status_code == 200
         assert f2.response.content == b"OggS-fake"
         assert f2.response.headers["content-type"] == "audio/ogg"
@@ -65,7 +66,7 @@ def test_gzip_request_body(tmp_path):
     with taddons.context(addon):
         f = flow("POST", "/v1/assets/batch", [{"requestId": "a", "assetId": 100}])
         f.request.encode("gzip")
-        addon.request(f)
+        asyncio.run(addon.request(f))
         assert f.request.headers["content-encoding"] == "gzip"
         assert json.loads(f.request.get_text())[0]["assetId"] == 900
 
@@ -74,11 +75,11 @@ def test_single_get_flows(tmp_path):
     addon, _, _ = make_addon(tmp_path)
     with taddons.context(addon):
         f = flow("GET", "/v1/asset/?id=100")
-        addon.request(f)
+        asyncio.run(addon.request(f))
         assert f.request.path == "/v1/asset/?id=900"
 
         f = flow("GET", "/v1/asset/?id=200")
-        addon.request(f)
+        asyncio.run(addon.request(f))
         assert f.response.content == b"OggS-fake"
 
 
@@ -86,7 +87,7 @@ def test_other_hosts_untouched(tmp_path):
     addon, hits, _ = make_addon(tmp_path)
     with taddons.context(addon):
         f = flow("POST", "/v1/assets/batch", [{"requestId": "a", "assetId": 100}], host="example.com")
-        addon.request(f)
+        asyncio.run(addon.request(f))
         assert json.loads(f.request.get_text())[0]["assetId"] == 100
         assert not hits
 
@@ -96,7 +97,7 @@ def test_missing_file_returns_404(tmp_path):
     sound.unlink()
     with taddons.context(addon):
         f = flow("GET", rules.FILE_PREFIX + rules.file_token(str(sound)))
-        addon.request(f)
+        asyncio.run(addon.request(f))
         assert f.response.status_code == 404
 
 
@@ -113,3 +114,49 @@ def test_host_pattern():
     assert pat.match("assetdelivery.roblox.com")
     assert not pat.match("evil-assetdelivery.roblox.com")
     assert not pat.match("assetdelivery.roblox.com.evil.com")
+
+
+def test_url_swap_downloads_once_and_serves(tmp_path, monkeypatch):
+    from patchwork import downloads
+    from patchwork.config import KIND_URL
+
+    calls = []
+
+    def fake_fetch(url, dest):
+        calls.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"RIFF-webp")
+        return dest
+
+    monkeypatch.setattr(downloads, "fetch", fake_fetch)
+    url = "https://files.catbox.moe/n3nhmi.webp"
+    cfg = Config(swaps=[Swap("NG", [13854780042], KIND_URL, url)])
+    addon = SwapAddon(cfg, downloads_dir=tmp_path / "dl")
+    with taddons.context(addon):
+        f = flow("POST", "/v1/assets/batch", [{"requestId": "a", "assetId": 13854780042}])
+        asyncio.run(addon.request(f))
+        f.response = tutils.tresp(content=b'[{"requestId": "a", "locations": []}]')
+        addon.response(f)
+        location = json.loads(f.response.get_text())[0]["locations"][0]["location"]
+        for _ in range(2):
+            f2 = flow("GET", location.split(HOST, 1)[1])
+            asyncio.run(addon.request(f2))
+            assert f2.response.content == b"RIFF-webp"
+            assert f2.response.headers["content-type"] == "image/webp"
+    assert calls == [url]
+
+
+def test_broken_link_gives_404(tmp_path, monkeypatch):
+    from patchwork import downloads
+    from patchwork.config import KIND_URL
+
+    def boom(url, dest):
+        raise downloads.DownloadError("files.catbox.moe: 404")
+
+    monkeypatch.setattr(downloads, "fetch", boom)
+    url = "https://files.catbox.moe/gone.png"
+    addon = SwapAddon(Config(swaps=[Swap("x", [1], KIND_URL, url)]), downloads_dir=tmp_path)
+    with taddons.context(addon):
+        f = flow("GET", rules.FILE_PREFIX + rules.file_token(url))
+        asyncio.run(addon.request(f))
+        assert f.response.status_code == 404
