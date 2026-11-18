@@ -15,7 +15,9 @@ CONFIG_VERSION = 1
 KIND_ASSET = "asset"  # replace with another Roblox asset ID
 KIND_FILE = "file"  # replace with a file on this PC
 KIND_URL = "url"  # replace with a file downloaded from a web link
-KINDS = (KIND_ASSET, KIND_FILE, KIND_URL)
+KIND_REMOVE = "remove"  # make the asset not load at all
+KINDS = (KIND_ASSET, KIND_FILE, KIND_URL, KIND_REMOVE)
+REMOVE_WORDS = ("remove", "none", "nothing", "delete")
 
 DEFAULT_INTERCEPT_HOSTS = ["assetdelivery.roblox.com"]
 DEFAULT_PROCESSES = ["RobloxPlayerBeta.exe"]
@@ -58,6 +60,8 @@ class Swap:
         if self.kind == KIND_ASSET:
             if not self.value.isdigit() or int(self.value) <= 0:
                 raise ValueError("The replacement asset ID must be a positive number")
+        elif self.kind == KIND_REMOVE:
+            self.value = ""
         elif self.kind == KIND_URL:
             parsed = urlparse(self.value)
             if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -68,6 +72,8 @@ class Swap:
     def describe(self) -> str:
         if self.kind == KIND_ASSET:
             return f"asset {self.value}"
+        if self.kind == KIND_REMOVE:
+            return "removed"
         if self.kind == KIND_URL:
             parsed = urlparse(self.value)
             name = parsed.path.rstrip("/").rsplit("/", 1)[-1]
@@ -139,9 +145,11 @@ def swap_from_inputs(
     targets = parse_asset_ids(ids_text)
     value = replace_text.strip().strip('"').strip()
     if not value:
-        raise ValueError("Enter what to replace them with: an asset ID, a link, or a file.")
+        raise ValueError("Enter what to replace them with: an asset ID, a link, a file, or remove.")
 
-    if match := _ASSET_ID_INPUT.fullmatch(value):
+    if value.lower() in REMOVE_WORDS:
+        kind, value = KIND_REMOVE, ""
+    elif match := _ASSET_ID_INPUT.fullmatch(value):
         kind, value = KIND_ASSET, match.group(1)
     elif value.lower().startswith(("http://", "https://")):
         host = urlparse(value).netloc.lower().split(":")[0]

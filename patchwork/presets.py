@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import KIND_ASSET, KIND_FILE, KIND_URL, Swap
+from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap
 
 PRESET_VERSION = 1
 FORMAT_PATCHWORK = "Patchwork"
@@ -28,6 +28,7 @@ class ImportResult:
     format: str
     swaps: list[Swap] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    missing_files: list[str] = field(default_factory=list)  # local files not on this PC
 
     def link_hosts(self) -> list[str]:
         return sorted({urlparse(s.value).netloc for s in self.swaps if s.kind == KIND_URL})
@@ -44,31 +45,61 @@ def _ids(value) -> list:
     return list(value) if isinstance(value, list) else []
 
 
+def _fleasion_rule(rule: dict, name: str, result: ImportResult) -> None:
+    mode = str(rule.get("mode", "")).lower()
+    try:
+        targets = [int(str(t).strip()) for t in _ids(rule.get("replace_ids"))]
+        enabled = bool(rule.get("enabled", True))
+        if mode == "id":
+            with_id = str(rule.get("with_id") or "").strip()
+            if with_id in ("", "0", "-1", "None"):
+                # Fleasion's "remove": an ID rule with nothing to replace it with.
+                swap = Swap(name, targets, KIND_REMOVE, "", enabled)
+            else:
+                swap = Swap(name, targets, KIND_ASSET, with_id, enabled)
+        elif mode == "cdn":
+            swap = Swap(name, targets, KIND_URL, str(rule.get("cdn_url", "")).strip(), enabled)
+        elif mode == "local":
+            path = str(rule.get("local_path", "")).strip()
+            if Path(path).suffix.lower() == ".obj":
+                result.skipped.append(f"{name}: .obj models need converting to Roblox's mesh format, "
+                                      "which Patchwork can't do yet")
+                return
+            swap = Swap(name, targets, KIND_FILE, path, enabled)
+            if not Path(path).is_file():
+                result.missing_files.append(f"{name}: {path}")
+        else:
+            result.skipped.append(f'{name}: mode "{mode or "?"}" isn\'t supported yet')
+            return
+    except (ValueError, TypeError) as exc:
+        result.skipped.append(f"{name}: {exc}")
+        return
+    result.swaps.append(swap)
+
+
+def _fleasion_rules(rules: list, result: ImportResult, prefix: str = "", depth: int = 0) -> None:
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            result.skipped.append(f"{prefix}Rule {index + 1}: not a rule")
+            continue
+        name = prefix + _rule_name(rule, index)
+        if rule.get("type") == "group" or "children" in rule:
+            children = rule.get("children")
+            if isinstance(children, list) and depth < 10:
+                # Groups are folders of rules; their names prefix the rules inside.
+                _fleasion_rules(children, result, f"{name} / ", depth + 1)
+            else:
+                result.skipped.append(f"{name}: empty or unreadable group")
+            continue
+        _fleasion_rule(rule, name, result)
+
+
 def parse_fleasion(data: dict) -> ImportResult:
     result = ImportResult(FORMAT_FLEASION)
     rules = data.get("replacement_rules")
     if not isinstance(rules, list):
         raise ValueError("replacement_rules should be a list")
-    for index, rule in enumerate(rules):
-        if not isinstance(rule, dict):
-            result.skipped.append(f"Rule {index + 1}: not a rule")
-            continue
-        name = _rule_name(rule, index)
-        mode = str(rule.get("mode", "")).lower()
-        try:
-            targets = [int(str(t).strip()) for t in _ids(rule.get("replace_ids"))]
-            enabled = bool(rule.get("enabled", True))
-            if mode == "id":
-                swap = Swap(name, targets, KIND_ASSET, str(rule.get("with_id", "")).strip(), enabled)
-            elif mode == "cdn":
-                swap = Swap(name, targets, KIND_URL, str(rule.get("cdn_url", "")).strip(), enabled)
-            else:
-                result.skipped.append(f'{name}: mode "{mode or "?"}" isn\'t supported yet')
-                continue
-        except (ValueError, TypeError) as exc:
-            result.skipped.append(f"{name}: {exc}")
-            continue
-        result.swaps.append(swap)
+    _fleasion_rules(rules, result)
     return result
 
 
@@ -141,14 +172,18 @@ def export_patchwork(swaps: list[Swap]) -> str:
 
 
 def export_fleasion(swaps: list[Swap]) -> tuple[str, list[str]]:
-    """Fleasion-format JSON, plus names of swaps it can't express (local files)."""
+    """Fleasion-format JSON, plus names of swaps it can't express (none at the moment)."""
     rules, skipped = [], []
     for s in swaps:
         rule = {"name": s.name, "replace_ids": s.targets}
         if s.kind == KIND_ASSET:
             rule.update(mode="id", enabled=s.enabled, with_id=int(s.value))
+        elif s.kind == KIND_REMOVE:
+            rule.update(mode="id", enabled=s.enabled)
         elif s.kind == KIND_URL:
             rule.update(mode="cdn", enabled=s.enabled, cdn_url=s.value)
+        elif s.kind == KIND_FILE:
+            rule.update(mode="local", enabled=s.enabled, local_path=s.value)
         else:
             skipped.append(s.name)
             continue

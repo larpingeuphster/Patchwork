@@ -17,6 +17,7 @@
   --k-asset: #ffc46b;
   --k-url: #7fb2ff;
   --k-file: #ff86b0;
+  --k-remove: #a39cb8;
   --ok: #7ce0a6;
   --warn: #ffc46b;
   --danger: #ff6b86;
@@ -202,7 +203,7 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 .status .switch { transform: scale(.82); transform-origin: left center; }
 .name { font-weight: 600; }
 .mode { justify-self: start; margin-left: 12px; padding: 1px 8px !important; border-radius: 6px; font: 700 11px/1.6 var(--body); color: var(--kc); background: color-mix(in srgb, var(--kc) 14%, transparent); }
-.row[data-kind="asset"] { --kc: var(--k-asset); } .row[data-kind="url"] { --kc: var(--k-url); } .row[data-kind="file"] { --kc: var(--k-file); }
+.row[data-kind="remove"] { --kc: var(--k-remove); } .row[data-kind="asset"] { --kc: var(--k-asset); } .row[data-kind="url"] { --kc: var(--k-url); } .row[data-kind="file"] { --kc: var(--k-file); }
 .ids, .repl { font: 12px var(--mono); color: var(--text-2); }
 .repl { color: var(--text); opacity: .85; }
 .empty-row { display: grid; place-items: center; gap: 8px; padding: 40px 10px; color: var(--muted); text-align: center; animation: rowIn .5s var(--ease) both; }
@@ -229,7 +230,7 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 .detect i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: background .3s, transform .4s var(--spring); }
 .detect.ok { color: var(--text-2); } .detect.ok i { background: var(--kc); transform: scale(1.4); box-shadow: 0 0 8px var(--kc); }
 .detect.err { color: var(--warn); } .detect.err i { background: var(--warn); }
-.detect[data-kind="asset"] { --kc: var(--k-asset); } .detect[data-kind="url"] { --kc: var(--k-url); } .detect[data-kind="file"] { --kc: var(--k-file); }
+.detect[data-kind="remove"] { --kc: var(--k-remove); } .detect[data-kind="asset"] { --kc: var(--k-asset); } .detect[data-kind="url"] { --kc: var(--k-url); } .detect[data-kind="file"] { --kc: var(--k-file); }
 .form-actions { display: flex; align-items: center; gap: 8px; padding: 6px 14px 12px; }
 
 /* ---------- footer ---------- */

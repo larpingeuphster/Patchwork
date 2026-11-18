@@ -339,3 +339,24 @@ def running_clients(processes: tuple[str, ...] = CLIENT_EXES) -> list[str]:
         if name in wanted:
             running.add(wanted[name])
     return sorted(running)
+
+
+def close_clients(processes: tuple[str, ...] = CLIENT_EXES, timeout: float = 8.0) -> list[str]:
+    """Close running Roblox processes (Windows only). Returns the ones that were running."""
+    running = running_clients(processes)
+    if not running or sys.platform != "win32":
+        return running
+    for name in running:
+        try:
+            subprocess.run(["taskkill", "/IM", name, "/T", "/F"], capture_output=True, timeout=10,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and running_clients(processes):
+        time.sleep(0.3)
+    # Give Windows a moment to release Roblox's cache files.
+    time.sleep(0.5)
+    return running

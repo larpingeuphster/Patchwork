@@ -18,13 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, games, presets, roblox
-from .config import KIND_ASSET, KIND_FILE, KIND_URL, Swap, app_dir, swap_from_inputs
+from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, app_dir, swap_from_inputs
 from .profiles import Store
 from .proxy import ProxyRunner, ca_dir, ensure_ca
 from .rules import Hit
 
-REPATCH_SECONDS = 20
-MODE_LABELS = {KIND_ASSET: "ID", KIND_URL: "Link", KIND_FILE: "File"}
+REPATCH_SECONDS = 15
+MODE_LABELS = {KIND_ASSET: "ID", KIND_URL: "Link", KIND_FILE: "File", KIND_REMOVE: "Remove"}
 
 
 class UserError(Exception):
@@ -52,6 +52,9 @@ class Controller:
         self.id_warning_shown = False
         self._last_game: tuple[bool, bool] | None = None
         self._repatch_timer: threading.Timer | None = None
+        self._started_at = 0.0
+        self._last_summary: tuple | None = None
+        self._warned_quiet = False
         self.file_dialog = None  # set by the window: (kind, save, default_name) -> path | None
 
         self.watcher = games.GameWatcher(
@@ -108,6 +111,8 @@ class Controller:
     # ----- snapshot ---------------------------------------------------------------
 
     def _display_value(self, swap: Swap) -> str:
+        if swap.kind == KIND_REMOVE:
+            return "remove"
         if swap.kind == KIND_FILE:
             portable = self.store.portable_path(swap.value)
             return "/" + portable if portable != swap.value else swap.value
@@ -334,7 +339,10 @@ class Controller:
         self.log(f'Imported {len(result.swaps)} swap(s) from {Path(path).name} as profile "{name}" (on).')
         for reason in result.skipped:
             self.log(f"Skipped {reason}", "warn")
-        return {"name": name, "count": len(result.swaps), "skipped": result.skipped}
+        for missing in result.missing_files:
+            self.log(f"File not found on this PC (swap kept, it won't apply until the file exists): {missing}", "warn")
+        return {"name": name, "count": len(result.swaps), "skipped": result.skipped,
+                "missing": result.missing_files}
 
     def export_preset(self, fmt: str, path: str) -> dict:
         with self._lock:
@@ -366,11 +374,22 @@ class Controller:
             self.log("No Roblox install found. Install Roblox, then press Start again "
                      "(the Microsoft Store version isn't supported).", "warn")
 
-    def start(self) -> None:
-        """Start in the background; progress arrives as events."""
+    def start(self, close_roblox: bool | None = None) -> dict | None:
+        """Start in the background; progress arrives as events.
+
+        Roblox only picks up Patchwork's certificate when it launches, so if it's
+        already open this returns {"confirm": "roblox_open"} first. Call again
+        with close_roblox=True to close it, or False to start anyway.
+        """
         with self._lock:
             if self.busy or self.runner.running:
-                return
+                return None
+            open_now = roblox.running_clients(tuple(self.store.processes))
+            if open_now and close_roblox is None:
+                return {"confirm": "roblox_open", "running": open_now}
+            if open_now and close_roblox:
+                roblox.close_clients(tuple(self.store.processes))
+                self.log("Closed Roblox. Open it again after Patchwork starts.")
             if not any(s.enabled for s in self.store.active_swaps()):
                 self.log("No swaps are switched on yet: turn on a profile first.", "warn")
             try:
@@ -396,13 +415,38 @@ class Controller:
                 self._changed()
                 return
             self.busy = False
-            self.log(f"Patchwork is running. Swaps apply once you join {games.RIVALS_NAME}.")
+            self.log(f"Patchwork is running. Open Roblox and join {games.RIVALS_NAME}.")
             if running:
-                self.log("Roblox was already open. Close it and open it again so it uses Patchwork.", "warn")
+                self.log("Roblox was already open, so it won't use Patchwork until you close it and open it "
+                         "again.", "warn")
+            self._started_at = time.monotonic()
+            self._last_summary = None
+            self._warned_quiet = False
             self._schedule_repatch()
             self._changed()
 
         threading.Thread(target=work, daemon=True).start()
+        return None
+
+    def _summarise(self) -> None:
+        """Every so often, say what Patchwork has seen from Roblox, and flag likely problems."""
+        st = self.runner.addon.stats
+        now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused)
+        if now != self._last_summary and (st.lookups or st.rejected):
+            self._last_summary = now
+            parts = [f"{st.assets} asset(s) asked for in {st.lookups} request(s)", f"{st.swapped} swapped"]
+            if st.paused:
+                parts.append(f"{st.paused} request(s) outside {games.RIVALS_NAME}")
+            if st.rejected:
+                parts.append(f"{st.rejected} certificate refusal(s)")
+            self.log("Seen from Roblox so far: " + ", ".join(parts) + ".", "stats")
+        quiet_for = time.monotonic() - getattr(self, "_started_at", time.monotonic())
+        if (not self._warned_quiet and quiet_for > 90 and self.watcher.state.in_rivals
+                and st.lookups == 0 and st.rejected == 0):
+            self._warned_quiet = True
+            self.log(f"You're in {games.RIVALS_NAME} but Patchwork hasn't seen any of Roblox's asset requests yet. "
+                     "Roblox probably isn't going through Patchwork: close Roblox completely (check Task Manager "
+                     "for RobloxPlayerBeta.exe), then open it again while Patchwork is running.", "warn")
 
     def stop(self) -> None:
         with self._lock:
@@ -429,6 +473,10 @@ class Controller:
             if self.runner.running:
                 try:
                     self._patch_roblox(quiet=True)
+                except Exception:
+                    pass
+                try:
+                    self._summarise()
                 except Exception:
                     pass
                 self._schedule_repatch()

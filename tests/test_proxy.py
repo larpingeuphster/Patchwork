@@ -180,3 +180,36 @@ def test_allow_gate_pauses_swaps(tmp_path):
         asyncio.run(addon.request(f))
         assert json.loads(f.request.get_text())[0]["assetId"] == 900
     assert seen == [None, 17625359962]
+
+
+def test_remove_and_stats(tmp_path):
+    from patchwork.config import KIND_REMOVE
+    addon = SwapAddon(Config(swaps=[Swap("gone", [5], KIND_REMOVE, "")]), downloads_dir=tmp_path)
+    with taddons.context(addon):
+        f = flow("POST", "/v1/assets/batch", [{"requestId": "a", "assetId": 5}, {"requestId": "b", "assetId": 6}])
+        asyncio.run(addon.request(f))
+        f.response = tutils.tresp(content=b'[{"requestId":"a","locations":[{"location":"x"}]},{"requestId":"b","locations":[]}]')
+        addon.response(f)
+        out = json.loads(f.response.get_text())
+        assert out[0]["errors"][0]["code"] == 404 and "locations" not in out[0]
+        g = flow("GET", "/v1/asset/?id=5")
+        asyncio.run(addon.request(g))
+        assert g.response.status_code == 404
+        u = flow("GET", "/v9/weird/123456")
+        asyncio.run(addon.request(u))
+        assert u.response is None
+    st = addon.stats
+    assert (st.lookups, st.assets, st.swapped) == (3, 3, 2)
+    assert st.unknown_paths == {"/v9/weird/<id>"}
+
+
+def test_tls_hooks_count_trust_and_refusals(tmp_path):
+    from types import SimpleNamespace
+    addon = SwapAddon(Config(), downloads_dir=tmp_path)
+    ok = SimpleNamespace(conn=SimpleNamespace(sni="assetdelivery.roblox.com"))
+    other = SimpleNamespace(conn=SimpleNamespace(sni="example.com"))
+    addon.tls_established_client(ok)
+    addon.tls_established_client(other)
+    addon.tls_failed_client(ok)
+    addon.tls_failed_client(ok)
+    assert addon.stats.trusted == 1 and addon.stats.rejected == 2

@@ -106,3 +106,25 @@ def test_content_types(tmp_path):
     assert rules.content_type_for(Path("a.PNG")) == "image/png"
     assert rules.content_type_for(Path("a.ogg")) == "audio/ogg"
     assert rules.content_type_for(Path("a.mesh")) == "application/octet-stream"
+
+
+def test_remove_swaps(tmp_path):
+    from patchwork.config import KIND_REMOVE
+    t = rules.SwapTable([Swap("gone", [5, 6], KIND_REMOVE, "")])
+    body = [{"requestId": "a", "assetId": 5}, {"requestId": "b", "assetId": 7}]
+    changed, files, hits = rules.rewrite_batch_request(body, t)
+    assert not changed and files == {"a": None} and hits[0].replacement == "removed"
+    resp = [{"requestId": "a", "locations": [{"location": "https://c0.rbxcdn.com/x"}]},
+            {"requestId": "b", "locations": [{"location": "https://c0.rbxcdn.com/y"}]}]
+    assert rules.rewrite_batch_response(resp, files, HOST)
+    assert "locations" not in resp[0] and resp[0]["errors"][0]["code"] == 404
+    assert resp[1]["locations"][0]["location"].endswith("/y")
+    assert rules.decide_single("/v1/asset/?id=6", t).remove
+    assert rules.decide_single("/v2/assetId/5", t).remove
+    assert t.served_for_token(rules.file_token("")) is None
+
+
+def test_is_single_path():
+    assert rules.is_single_path("/v1/asset/?id=1")
+    assert rules.is_single_path("/v2/assetId/123/version/2")
+    assert not rules.is_single_path("/v1/something-else")

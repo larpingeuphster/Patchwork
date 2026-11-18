@@ -14,6 +14,7 @@ import logging
 import re
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -51,6 +52,28 @@ def host_pattern(host: str) -> str:
     return rf"^{re.escape(host.strip().lower())}(:\d+)?$"
 
 
+class SwapStats:
+    """What Patchwork has seen from Roblox, for the Activity tab."""
+
+    def __init__(self) -> None:
+        self.trusted = 0  # TLS handshakes Roblox accepted
+        self.rejected = 0  # TLS handshakes Roblox refused
+        self.lookups = 0  # asset-delivery requests seen
+        self.assets = 0  # individual assets asked for
+        self.swapped = 0
+        self.paused = 0  # requests seen while not in RIVALS
+        self.unknown_paths: set[str] = set()
+        self._last_reject_log = 0.0
+
+
+def _sni(data) -> str:
+    for obj in (getattr(data, "conn", None), getattr(getattr(data, "context", None), "client", None)):
+        sni = getattr(obj, "sni", None)
+        if sni:
+            return str(sni).lower()
+    return ""
+
+
 class SwapAddon:
     """mitmproxy addon that applies the swap table to asset-delivery traffic."""
 
@@ -66,12 +89,42 @@ class SwapAddon:
         # request's Roblox-Place-Id header when Roblox sends one, else None.
         self.allow = allow
         self.downloads = Downloads(downloads_dir or Path(tempfile.gettempdir()) / "patchwork-downloads")
+        self.stats = SwapStats()
         self.set_config(config)
 
     def set_config(self, config: Config) -> None:
         # Replaced atomically so a running proxy picks up edits immediately.
         self.table = rules.SwapTable(config.swaps)
         self.hosts = {h.strip().lower() for h in config.intercept_hosts}
+
+    # --- TLS: tells us whether Roblox trusts Patchwork's certificate ---------------
+
+    def tls_established_client(self, data) -> None:
+        if _sni(data) in self.hosts:
+            self.stats.trusted += 1
+            if self.stats.trusted == 1:
+                log.info("Roblox accepted Patchwork's certificate for %s. Swaps can apply.", _sni(data))
+
+    def tls_failed_client(self, data) -> None:
+        host = _sni(data)
+        if host not in self.hosts:
+            return
+        self.stats.rejected += 1
+        now = time.monotonic()
+        if now - self.stats._last_reject_log > 30:
+            self.stats._last_reject_log = now
+            log.warning(
+                "Roblox refused Patchwork's certificate for %s (%d time(s) so far), so nothing can be swapped. "
+                "Close Roblox completely, press Start, then open Roblox again. If it keeps happening, Roblox "
+                "isn't using the certificate file Patchwork set up.", host, self.stats.rejected)
+
+    def _note_unknown(self, method: str, path: str) -> None:
+        shape = re.sub(r"\d{3,}", "<id>", path.split("?", 1)[0])
+        if shape in self.stats.unknown_paths or len(self.stats.unknown_paths) >= 15:
+            return
+        self.stats.unknown_paths.add(shape)
+        log.info("Roblox sent %s %s to the asset server. Patchwork doesn't handle this kind of request yet.",
+                 method, shape)
 
     def _ours(self, flow) -> bool:
         return flow.request.pretty_host.lower() in self.hosts
@@ -127,12 +180,20 @@ class SwapAddon:
                 flow.response = http.Response.make(404, b"Patchwork: replacement not available")
             return
 
+        self.stats.lookups += 1
+        is_batch = req.method == "POST" and rules.is_batch_path(path)
+        is_single = req.method == "GET" and rules.is_single_path(path)
+        if not (is_batch or is_single):
+            self._note_unknown(req.method, path)
+            return
+
         if len(self.table) == 0:
             return
 
         if self.allow is not None:
             header = req.headers.get("Roblox-Place-Id", "")
             if not self.allow(int(header) if header.isdigit() else None):
+                self.stats.paused += 1
                 return
 
         if req.method == "POST" and rules.is_batch_path(path):
@@ -140,7 +201,10 @@ class SwapAddon:
                 items = json.loads(req.get_text() or "null")
             except (ValueError, UnicodeDecodeError):
                 return
+            if isinstance(items, list):
+                self.stats.assets += len(items)
             changed, file_items, hits = rules.rewrite_batch_request(items, self.table)
+            self.stats.swapped += len(hits)
             if changed:
                 req.set_text(json.dumps(items))
             if file_items:
@@ -149,10 +213,14 @@ class SwapAddon:
             return
 
         if req.method == "GET":
+            self.stats.assets += 1
             decision = rules.decide_single(path, self.table)
             if decision is None:
                 return
-            if decision.new_path is not None:
+            self.stats.swapped += 1
+            if decision.remove:
+                flow.response = http.Response.make(404, b"Request asset was not found")
+            elif decision.new_path is not None:
                 req.path = decision.new_path
             elif decision.serve_file:
                 if not await self._serve(flow, decision.swap):

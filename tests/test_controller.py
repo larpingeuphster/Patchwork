@@ -134,3 +134,12 @@ def test_start_and_stop_with_regular_proxy(tmp_path, monkeypatch):
         assert any("Patchwork is running" in t for t in texts) and "Patchwork stopped." in texts
     finally:
         ctl.shutdown()
+
+
+def test_start_asks_when_roblox_is_open(ctl, monkeypatch):
+    from patchwork import roblox
+    closed = []
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: ["RobloxPlayerBeta.exe"])
+    monkeypatch.setattr(roblox, "close_clients", lambda *a, **k: closed.append(True) or ["RobloxPlayerBeta.exe"])
+    assert ctl.start() == {"confirm": "roblox_open", "running": ["RobloxPlayerBeta.exe"]}
+    assert not ctl.busy and not closed

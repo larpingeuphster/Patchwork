@@ -377,14 +377,15 @@
       const label = box.querySelector("span");
       if (!text.trim()) {
         box.className = "detect"; box.removeAttribute("data-kind");
-        label.textContent = "Type an asset ID, paste a link, or browse for a file.";
+        label.textContent = "Type an asset ID, paste a link, browse for a file, or type remove.";
         return;
       }
       try {
         const r = await api("detect", { replace_text: text });
         if (r.kind) {
           box.className = "detect ok"; box.dataset.kind = r.kind;
-          label.textContent = `${{ asset: "Asset ID", url: "Web link (downloaded once)", file: "File on this PC" }[r.kind]} · ${r.describe}`;
+          label.textContent = r.kind === "remove" ? "Remove: Roblox loads nothing for these assets"
+            : `${{ asset: "Asset ID", url: "Web link (downloaded once)", file: "File on this PC" }[r.kind]} · ${r.describe}`;
         } else {
           box.className = "detect err"; box.removeAttribute("data-kind");
           label.textContent = r.error || "Not recognised yet.";
@@ -500,6 +501,7 @@
       try { r = await api("import_preset", { path, confirmed: true }); } catch (e) { return alertBox("Can't import this file", e.message); }
     }
     toast(`Imported ${plural(r.count, "swap")} as “${r.name}”`);
+    if (r.missing?.length) toast(`${plural(r.missing.length, "swap")} point at files that aren't on this PC. See Activity.`, { tone: "warn", ms: 7000 });
     if (r.skipped?.length) alertBox("Some rules were skipped", `Imported ${plural(r.count, "swap")}. Skipped ${r.skipped.length}:\n\n${r.skipped.slice(0, 15).join("\n")}`);
   }
   $("#import-btn").addEventListener("click", importPreset);
@@ -521,7 +523,17 @@
     if (!S || S.busy) return;
     if (S.running) return act("stop");
     if (!S.active_count) toast("No swaps are switched on yet. Tick a profile under Enabled.", { tone: "warn" });
-    await act("start");
+    const r = await act("start");
+    if (r && r.confirm === "roblox_open") {
+      const choice = await modal({
+        title: "Roblox is open",
+        html: "<p>Roblox only picks up Patchwork when it starts, so swaps won't work in the Roblox that's open now.</p>" +
+          "<p>Close Roblox, then open it again once Patchwork is running.</p>",
+        buttons: [{ label: "Cancel", value: null }, { label: "Start anyway", value: "anyway" }, { label: "Close Roblox and start", value: "close", kind: "primary" }],
+      });
+      if (choice === "close") await act("start", { close_roblox: true });
+      else if (choice === "anyway") await act("start", { close_roblox: false });
+    }
   });
   $$("[data-setting]").forEach((el) => el.addEventListener("change", () => act("set_setting", { key: el.dataset.setting, value: el.checked })));
   $("#remove-cert").addEventListener("click", async () => {

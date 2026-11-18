@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from patchwork import presets
-from patchwork.config import KIND_ASSET, KIND_FILE, KIND_URL, Swap, swap_from_inputs
+from patchwork.config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, swap_from_inputs
 
 EXAMPLE = Path(__file__).with_name("fleasion_example.json")
 
@@ -47,11 +47,47 @@ def test_round_trips(tmp_path):
     assert again.swaps == swaps
 
 
-def test_fleasion_export_leaves_out_local_files(tmp_path):
+def test_fleasion_export_writes_local_files_and_removals(tmp_path):
     f = tmp_path / "a.png"
     f.write_bytes(b"x")
-    text, skipped = presets.export_fleasion([Swap("local", [1], KIND_FILE, str(f))])
-    assert skipped == ["local"] and json.loads(text) == {"replacement_rules": []}
+    text, skipped = presets.export_fleasion([
+        Swap("local", [1], KIND_FILE, str(f)),
+        Swap("gone", [2, 3], KIND_REMOVE, ""),
+    ])
+    assert skipped == []
+    assert json.loads(text) == {"replacement_rules": [
+        {"name": "local", "replace_ids": [1], "mode": "local", "enabled": True, "local_path": str(f)},
+        {"name": "gone", "replace_ids": [2, 3], "mode": "id", "enabled": True},
+    ]}
+
+
+def test_fleasion_groups_local_and_remove(tmp_path):
+    here = tmp_path / "hit.ogg"
+    here.write_bytes(b"x")
+    data = {"replacement_rules": [
+        {"name": "remove", "replace_ids": [10, 11], "mode": "id", "enabled": True},
+        {"name": "zero", "replace_ids": [12], "mode": "id", "enabled": True, "with_id": 0},
+        {"name": "here", "replace_ids": [13], "mode": "local", "enabled": False, "local_path": str(here)},
+        {"name": "elsewhere", "replace_ids": [14], "mode": "local", "enabled": True,
+         "local_path": "C:/Users/Someone/Downloads/x.png"},
+        {"type": "group", "name": "Bow", "expanded": True, "children": [
+            {"name": "shoot", "replace_ids": [15], "mode": "id", "enabled": True, "with_id": 99},
+            {"name": "Arrow", "replace_ids": [16], "mode": "local", "enabled": True, "local_path": "C:/a/arrow.obj"},
+            {"type": "group", "name": "Inner", "children": [
+                {"name": "deep", "replace_ids": [17], "mode": "cdn", "enabled": True, "cdn_url": "https://x.example/d.png"},
+            ]},
+        ]},
+    ]}
+    r = presets.parse_preset(data)
+    by = {s.name: s for s in r.swaps}
+    assert by["remove"].kind == KIND_REMOVE and by["remove"].targets == [10, 11]
+    assert by["zero"].kind == KIND_REMOVE
+    assert by["here"].kind == KIND_FILE and by["here"].enabled is False
+    assert by["elsewhere"].kind == KIND_FILE
+    assert by["Bow / shoot"].value == "99"
+    assert by["Bow / Inner / deep"].kind == KIND_URL
+    assert len(r.skipped) == 1 and "Bow / Arrow" in r.skipped[0] and ".obj" in r.skipped[0]
+    assert r.missing_files == ["elsewhere: C:/Users/Someone/Downloads/x.png"]
 
 
 def test_patchwork_relative_files(tmp_path):
@@ -87,6 +123,8 @@ def test_swap_from_inputs(tmp_path):
     assert swap_from_inputs("", "1", "https://files.catbox.moe/a.webp", cfg).kind == KIND_URL
     s = swap_from_inputs("Stick", "1", "/Stick/stick.mesh", cfg)
     assert s.kind == KIND_FILE and Path(s.value) == (cfg / "Stick" / "stick.mesh").resolve()
+    assert swap_from_inputs("", "1 2", "Remove", cfg).kind == KIND_REMOVE
+    assert swap_from_inputs("", "1", "none", cfg).describe() == "removed"
     for ids, value in (("", "5"), ("1", ""), ("1", "/nope.png"), ("abc", "5")):
         with pytest.raises(ValueError):
             swap_from_inputs("", ids, value, cfg)

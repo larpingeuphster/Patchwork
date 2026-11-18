@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
 
-from .config import KIND_ASSET, Swap
+from .config import KIND_ASSET, KIND_REMOVE, Swap
 
 FILE_PREFIX = "/patchwork/file/"
 
@@ -76,7 +76,7 @@ class SwapTable:
             for target in swap.targets:
                 # Earlier swaps win if two swaps claim the same asset.
                 self._by_id.setdefault(target, swap)
-            if swap.kind != KIND_ASSET:
+            if swap.kind not in (KIND_ASSET, KIND_REMOVE):
                 self._served.setdefault(file_token(swap.value), swap)
 
     def __len__(self) -> int:
@@ -117,6 +117,13 @@ def _item_key(item: dict, index: int) -> str:
     return str(request_id) if request_id is not None else f"#{index}"
 
 
+def is_single_path(path: str) -> bool:
+    """A single-asset GET Patchwork knows how to handle (see decide_single)."""
+    bare = path.split("?", 1)[0]
+    norm = bare.rstrip("/").lower()
+    return norm in _QUERY_REDIRECT_PATHS or norm in _QUERY_JSON_PATHS or bool(_PATH_JSON.match(bare))
+
+
 def is_batch_path(path: str) -> bool:
     return path.split("?", 1)[0].rstrip("/").lower() in _BATCH_PATHS
 
@@ -127,7 +134,8 @@ def rewrite_batch_request(
     """Apply swaps to a batch request body in place.
 
     Returns whether the body changed, a map of item key -> replacement file
-    path for "file" swaps (needed to rewrite the response), and the hits.
+    path or link for "file"/"url" swaps (None for "remove" swaps), which is
+    needed to rewrite the response, and the hits.
     """
     changed = False
     file_items: dict[str, str] = {}
@@ -147,6 +155,8 @@ def rewrite_batch_request(
             original = item["assetId"]
             item["assetId"] = str(swap.value) if isinstance(original, str) else int(swap.value)
             changed = True
+        elif swap.kind == KIND_REMOVE:
+            file_items[_item_key(item, index)] = None
         else:
             file_items[_item_key(item, index)] = swap.value
         hits.append(Hit(asset_id, swap.name, swap.describe()))
@@ -158,18 +168,28 @@ def _point_at_file(entry: dict, host: str, path: str) -> None:
     entry.pop("errors", None)
 
 
-def rewrite_batch_response(items: list, file_items: dict[str, str], host: str) -> bool:
-    """Point the answers for "file" swaps at Patchwork's local file URL."""
+def _mark_missing(entry: dict) -> None:
+    """Answer as if the asset doesn't exist, so Roblox loads nothing for it."""
+    entry.pop("locations", None)
+    entry["errors"] = [{"code": 404, "message": "Request asset was not found"}]
+
+
+def rewrite_batch_response(items: list, file_items: dict[str, str | None], host: str) -> bool:
+    """Point the answers for file/link swaps at Patchwork's file URL, and blank out removed assets."""
     if not file_items or not isinstance(items, list):
         return False
     changed = False
     for index, entry in enumerate(items):
         if not isinstance(entry, dict):
             continue
-        path = file_items.get(_item_key(entry, index))
-        if path is None:
+        key = _item_key(entry, index)
+        if key not in file_items:
             continue
-        _point_at_file(entry, host, path)
+        path = file_items[key]
+        if path is None:
+            _mark_missing(entry)
+        else:
+            _point_at_file(entry, host, path)
         changed = True
     return changed
 
@@ -190,6 +210,7 @@ class SingleDecision:
     swap: Swap
     new_path: str | None = None  # rewritten path + query for asset swaps
     serve_file: bool = False  # answer the request directly from disk
+    remove: bool = False  # answer "not found" so Roblox loads nothing
     rewrite_json: bool = False  # let it through, rewrite the JSON answer
 
 
@@ -208,6 +229,8 @@ def decide_single(path_and_query: str, table: SwapTable) -> SingleDecision | Non
         if swap is None:
             return None
         hit = Hit(asset_id, swap.name, swap.describe())
+        if swap.kind == KIND_REMOVE:
+            return SingleDecision(hit, swap, remove=True)
         if swap.kind == KIND_ASSET:
             params[id_index] = (params[id_index][0], swap.value)
             return SingleDecision(hit, swap, new_path=f"{path}?{urlencode(params)}")
@@ -222,6 +245,8 @@ def decide_single(path_and_query: str, table: SwapTable) -> SingleDecision | Non
         if swap is None:
             return None
         hit = Hit(asset_id, swap.name, swap.describe())
+        if swap.kind == KIND_REMOVE:
+            return SingleDecision(hit, swap, remove=True)
         if swap.kind == KIND_ASSET:
             start, end = match.span(1)
             new_path = path[:start] + swap.value + path[end:]
