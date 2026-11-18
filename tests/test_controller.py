@@ -152,3 +152,18 @@ def test_clear_cache_names_the_program_holding_it(ctl, monkeypatch):
     monkeypatch.setattr(roblox, "lockers", lambda paths: [(1234, "Fishstrap")])
     with pytest.raises(UserError, match=r"Fishstrap \(PID 1234\)"):
         ctl.clear_cache()
+
+
+def test_discovers_install_from_running_roblox(ctl, monkeypatch, tmp_path):
+    from patchwork import roblox
+    exe = tmp_path / "Froststrap" / "Versions" / "version-abc" / "RobloxPlayerBeta.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(roblox, "client_paths", lambda *a, **k: [exe])
+    added = ctl.discover_installs()
+    assert added == [str(exe.parent.parent)]
+    assert ctl.store.install_roots == [str(exe.parent.parent)]
+    assert exe.parent.parent in roblox.version_roots()
+    assert ctl.discover_installs() == []  # remembered
+    assert "Froststrap/version-abc" in ctl.snapshot()["installs"]
+    roblox.set_extra_roots([])

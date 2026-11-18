@@ -145,3 +145,30 @@ def test_lockers_finds_this_process_on_windows(tmp_path):
         fh.flush()
         found = roblox.lockers([held])
     assert any(pid == os.getpid() for pid, _ in found), found
+
+
+def test_client_paths_finds_a_running_program_on_windows():
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    import pytest
+
+    if sys.platform != "win32":
+        assert roblox.client_paths() == []
+        pytest.skip("process paths are looked up with Windows APIs")
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        time.sleep(1)
+        name = Path(sys.executable).name
+        paths = roblox.client_paths((name,))
+        assert Path(sys.executable).resolve() in {p.resolve() for p in paths}, paths
+    finally:
+        child.kill()
+
+
+def test_root_for_exe():
+    from pathlib import Path
+    exe = Path("C:/Users/x/AppData/Local/Froststrap/Versions/version-1/RobloxPlayerBeta.exe")
+    assert roblox.root_for_exe(exe) == Path("C:/Users/x/AppData/Local/Froststrap/Versions")

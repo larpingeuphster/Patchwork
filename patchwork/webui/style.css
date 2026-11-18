@@ -273,6 +273,8 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 .toggle-row b { display: block; font-weight: 650; }
 .toggle-row small { color: var(--muted); font-size: 12px; }
 .settings-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.installs { margin: 0 14px 14px; padding-left: 18px; color: var(--text-2); }
+.installs li { margin: 3px 0; }
 .about { margin-top: 12px; color: var(--muted); font-size: 12px; text-align: center; }
 
 /* ---------- modal ---------- */

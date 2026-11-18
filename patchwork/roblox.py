@@ -51,25 +51,35 @@ def _env_path(name: str) -> Path | None:
     return Path(value) if value else None
 
 
+# Version folders found by watching where Roblox actually runs from (launchers
+# that install somewhere unusual). Set from saved settings by the controller.
+_extra_roots: list[Path] = []
+
+
+def set_extra_roots(roots: list[Path]) -> None:
+    _extra_roots[:] = [Path(r) for r in roots]
+
+
 def version_roots() -> list[Path]:
     """Folders that may contain Roblox ``version-*`` folders.
 
-    Covers the standard installer and launchers such as Bloxstrap that keep
-    their own copy under %LOCALAPPDATA%\\<Launcher>\\Versions.
+    Covers the standard installer and launchers such as Bloxstrap, Fishstrap
+    and Froststrap that keep their own copy under <some folder>\\Versions in
+    Local or Roaming AppData or Program Files, plus any folder Patchwork has
+    seen Roblox run from.
     """
     roots: list[Path] = []
-    local = _env_path("LOCALAPPDATA")
-    if local and local.is_dir():
+    for name in ("LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+        base = _env_path(name)
+        if not base or not base.is_dir():
+            continue
         try:
-            for child in local.iterdir():
+            for child in base.iterdir():
                 if (child / "Versions").is_dir():
                     roots.append(child / "Versions")
         except OSError:
             pass
-    for name in ("ProgramFiles(x86)", "ProgramFiles"):
-        base = _env_path(name)
-        if base and (base / "Roblox" / "Versions").is_dir():
-            roots.append(base / "Roblox" / "Versions")
+    roots += [r for r in _extra_roots if r.is_dir()]
     # De-duplicate while keeping order.
     seen: set[Path] = set()
     unique = []
@@ -393,6 +403,52 @@ def running_clients(processes: tuple[str, ...] = CLIENT_EXES) -> list[str]:
         if name in wanted:
             running.add(wanted[name])
     return sorted(running)
+
+
+def client_paths(processes: tuple[str, ...] = CLIENT_EXES) -> list[Path]:
+    """Full paths of the running Roblox executables (Windows only)."""
+    if sys.platform != "win32":
+        return []
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    wanted = {p.lower() for p in processes}
+    pids = []
+    for line in out.splitlines():
+        cols = [c.strip('"') for c in line.split('","')]
+        if len(cols) > 1 and cols[0].strip('"').lower() in wanted and cols[1].isdigit():
+            pids.append(int(cols[1]))
+    paths = []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        for pid in pids:
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                continue
+            try:
+                size = wintypes.DWORD(1024)
+                buf = ctypes.create_unicode_buffer(size.value)
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    paths.append(Path(buf.value))
+            finally:
+                kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+    return paths
+
+
+def root_for_exe(exe: Path) -> Path:
+    """The folder that holds version folders, for a Roblox executable path."""
+    version_dir = exe.parent
+    return version_dir.parent
 
 
 def close_clients(processes: tuple[str, ...] = CLIENT_EXES, timeout: float = 8.0) -> list[str]:

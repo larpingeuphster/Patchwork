@@ -57,6 +57,7 @@ class Controller:
         self._warned_quiet = False
         self.file_dialog = None  # set by the window: (kind, save, default_name) -> path | None
 
+        roblox.set_extra_roots([Path(r) for r in self.store.install_roots])
         self.watcher = games.GameWatcher(
             log_dir if log_dir is not None else games.log_dir(),
             on_change=lambda state: self._game_changed(),
@@ -76,6 +77,8 @@ class Controller:
         for warning in self.store.warnings:
             self.log(warning, "warn")
         self.watcher.start()
+        if sys.platform == "win32":
+            threading.Thread(target=self._discover_loop, name="patchwork-discover", daemon=True).start()
 
     # ----- events ---------------------------------------------------------------
 
@@ -166,6 +169,8 @@ class Controller:
                 "paths": {"home": str(self.home), "configs": str(store.configs_dir)},
                 "rivals": {"name": games.RIVALS_NAME, "place_id": games.RIVALS_PLACE_ID},
                 "can_undo": bool(store._undo),
+                "installs": [i.label for i in roblox.find_installs()] + [
+                    f"{m.parent.name}/Modifications" for m in roblox.modifications_dirs()],
                 "seq": self._seq,
             }
 
@@ -504,6 +509,53 @@ class Controller:
         else:
             roblox.clear_cache()
             self.log("Cleared Roblox's asset cache. Roblox is back to normal.")
+
+    def _discover_loop(self) -> None:
+        while True:
+            try:
+                self.discover_installs()
+            except Exception:
+                pass
+            time.sleep(8)
+
+    def discover_installs(self) -> list[str]:
+        """Remember any Roblox install that's running from a folder Patchwork didn't know about.
+
+        Launchers such as Froststrap can keep Roblox somewhere unusual. Returns
+        the folders added.
+        """
+        known = {r.resolve() for r in roblox.version_roots()}
+        added = []
+        for exe in roblox.client_paths(tuple(self.store.processes)):
+            root = roblox.root_for_exe(exe)
+            try:
+                resolved = root.resolve()
+            except OSError:
+                continue
+            if resolved in known or str(root) in self.store.install_roots:
+                continue
+            self.store.install_roots.append(str(root))
+            added.append(str(root))
+            known.add(resolved)
+        if added:
+            self.store.save_settings()
+            roblox.set_extra_roots([Path(r) for r in self.store.install_roots])
+            running = self.runner.running
+            for root in added:
+                if running:
+                    self.log(f"Found Roblox running from {root}, which Patchwork hadn't set up before (a launcher "
+                             "such as Froststrap). It's set up now: close Roblox completely and open it again "
+                             "for swaps to work.", "warn")
+                else:
+                    self.log(f"Found Roblox running from {root} (a launcher such as Froststrap). Patchwork will "
+                             "set it up when you press Start.")
+            if running:
+                try:
+                    self._patch_roblox(quiet=True)
+                except Exception:
+                    pass
+            self._changed()
+        return added
 
     def _allow_swaps(self, header_place: int | None) -> bool:
         """Called by the proxy for each asset request: swap only inside RIVALS."""

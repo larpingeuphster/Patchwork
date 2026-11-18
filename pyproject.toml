@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patchwork"
-version = "1.0.2"
+version = "1.0.3"
 description = "Swap RIVALS assets (textures, sounds, meshes) on your own PC."
 readme = "README.md"
 license = "MIT"

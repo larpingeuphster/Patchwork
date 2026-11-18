@@ -167,6 +167,10 @@
     $("#stat-game").textContent = S.game.in_game ? (S.game.in_rivals ? S.rivals.name : "Another game") : "Not in a game";
     $("#rivals-place").textContent = S.rivals.place_id;
     $("#home-path").textContent = S.paths.home;
+    const inst = $("#installs");
+    inst.innerHTML = S.installs.length
+      ? S.installs.map((i) => `<li><code>${esc(i)}</code></li>`).join("")
+      : "<li>No Roblox install found yet.</li>";
     $$("[data-setting]").forEach((el) => { el.checked = !!S.settings[el.dataset.setting]; });
   }
 
