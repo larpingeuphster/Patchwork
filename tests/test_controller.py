@@ -159,11 +159,11 @@ def test_discovers_install_from_running_roblox(ctl, monkeypatch, tmp_path):
     exe = tmp_path / "Froststrap" / "Versions" / "version-abc" / "RobloxPlayerBeta.exe"
     exe.parent.mkdir(parents=True)
     exe.write_bytes(b"")
+    monkeypatch.setattr(roblox, "_extra_roots", [])
     monkeypatch.setattr(roblox, "client_paths", lambda *a, **k: [exe])
-    added = ctl.discover_installs()
-    assert added == [str(exe.parent.parent)]
+    # On Windows the controller's own background finder may get there first.
+    ctl.discover_installs()
     assert ctl.store.install_roots == [str(exe.parent.parent)]
     assert exe.parent.parent in roblox.version_roots()
     assert ctl.discover_installs() == []  # remembered
     assert "Froststrap/version-abc" in ctl.snapshot()["installs"]
-    roblox.set_extra_roots([])

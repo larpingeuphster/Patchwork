@@ -61,8 +61,9 @@ def test_version_roots(tmp_path, monkeypatch):
     (local / "Bloxstrap" / "Versions").mkdir(parents=True)
     (local / "Other").mkdir()
     monkeypatch.setenv("LOCALAPPDATA", str(local))
-    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
-    monkeypatch.delenv("ProgramFiles", raising=False)
+    for name in ("APPDATA", "ProgramFiles(x86)", "ProgramFiles"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(roblox, "_extra_roots", [])
     roots = {p.parent.name for p in roblox.version_roots()}
     assert roots == {"Roblox", "Bloxstrap"}
 
