@@ -59,7 +59,7 @@ Only swap in files you made or are allowed to use. Patchwork doesn't come with a
 
 ## Install
 
-1. Download `Patchwork.exe` from the [Releases](../../releases) page. Only download it from there: copies from anywhere else could have been changed.
+1. Download `Patchwork-v<version>-Windows.exe` (for example `Patchwork-v1.0.0-Windows.exe`) from the [Releases](../../releases) page. Only download it from there: copies from anywhere else could have been changed.
 2. Run it. Windows SmartScreen may warn that the app is unrecognized, because the build isn't code-signed. Some antivirus tools also flag apps that redirect network traffic. The source is published here so you can check exactly what Patchwork does.
 3. The first time you press **Start**, Windows asks for permission to run mitmproxy's redirector. It needs admin rights to capture Roblox's connections.
 
@@ -142,7 +142,7 @@ Roblox installs updates into a new folder. While Patchwork is running, it trusts
 
 ## Why the source is public
 
-Patchwork's source code is published so anyone can check that it is safe, and isn't a RAT, a token logger or anything else hidden. It isn't here as a build kit: use the official `Patchwork.exe` from the [Releases](../../releases) page.
+Patchwork's source code is published so anyone can check that it is safe, and isn't a RAT, a token logger or anything else hidden. It isn't here as a build kit: use the official download from the [Releases](../../releases) page.
 
 Things worth checking, and where to look:
 

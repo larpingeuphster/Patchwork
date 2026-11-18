@@ -63,6 +63,7 @@ jobs:
         run: |
           version=$(python3 -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('patchwork/__init__.py').read()).group(1))")
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "asset=Patchwork-v$version-Windows.exe" >> "$GITHUB_OUTPUT"
           notes="release-notes/v$version.md"
           if [ -f "$notes" ]; then echo "notes=$notes" >> "$GITHUB_OUTPUT"; fi
           if gh release view "v$version" >/dev/null 2>&1; then
@@ -76,16 +77,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "${{ steps.version.outputs.tag }}" --notes-file "${{ steps.version.outputs.notes }}"
+      # Releases made before files were named by version get the same .exe
+      # re-uploaded under the versioned name (the file itself is unchanged).
+      - name: Name the release file by version
+        if: steps.version.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ASSET: ${{ steps.version.outputs.asset }}
+        run: |
+          names=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          if ! grep -qx "$ASSET" <<<"$names" && grep -qx "Patchwork.exe" <<<"$names"; then
+            gh release download "$TAG" --pattern Patchwork.exe --dir old
+            mv old/Patchwork.exe "$ASSET"
+            gh release upload "$TAG" "$ASSET"
+            gh release delete-asset "$TAG" Patchwork.exe --yes
+          fi
       - uses: actions/download-artifact@v4
         if: steps.version.outputs.exists == 'false'
         with:
           name: Patchwork-windows
+      - name: Name the file by version
+        if: steps.version.outputs.exists == 'false'
+        run: mv Patchwork.exe "${{ steps.version.outputs.asset }}"
       - uses: softprops/action-gh-release@v2
         if: steps.version.outputs.exists == 'false'
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Patchwork ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          files: Patchwork.exe
+          files: ${{ steps.version.outputs.asset }}
           body_path: ${{ steps.version.outputs.notes }}
           generate_release_notes: ${{ steps.version.outputs.notes == '' }}
