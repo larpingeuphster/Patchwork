@@ -9,9 +9,12 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 a = Analysis(
     [os.path.join(ROOT, "patchwork", "__main__.py")],
     pathex=[ROOT],
-    datas=[(os.path.join(ROOT, "patchwork", "assets"), os.path.join("patchwork", "assets"))],
-    hiddenimports=["patchwork.gui", "patchwork.selfcheck"],
-    excludes=["mitmproxy.tools.console", "mitmproxy.tools.web", "urwid"],
+    datas=[
+        (os.path.join(ROOT, "patchwork", "assets"), os.path.join("patchwork", "assets")),
+        (os.path.join(ROOT, "patchwork", "webui"), os.path.join("patchwork", "webui")),
+    ],
+    hiddenimports=["patchwork.app", "patchwork.selfcheck", "webview.platforms.edgechromium"],
+    excludes=["mitmproxy.tools.console", "mitmproxy.tools.web", "urwid", "webview.platforms.qt", "webview.platforms.gtk"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

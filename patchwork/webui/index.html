@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patchwork for RIVALS</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="booting">
+
+<!-- Moving background: four soft patches of colour that drift behind every page. -->
+<div class="aurora" aria-hidden="true">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+  <div class="rise"></div>
+</div>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- Intro: four patches fly in, get stitched together, then the quilt opens into the app. -->
+<div id="intro" aria-hidden="true">
+  <div class="quilt">
+    <span class="patch p1"></span><span class="patch p2"></span><span class="patch p3"></span><span class="patch p4"></span>
+    <svg class="seams" viewBox="0 0 200 200"><path d="M100 18 V182 M18 100 H182"/><rect x="14" y="14" width="172" height="172" rx="34"/></svg>
+  </div>
+  <div class="wordmark"><span>P</span><span>a</span><span>t</span><span>c</span><span>h</span><span>w</span><span>o</span><span>r</span><span>k</span></div>
+  <div class="tagline">for RIVALS</div>
+</div>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="3" y="3" width="15.5" height="15.5" rx="4.5" fill="var(--mint)"/>
+        <rect x="21.5" y="3" width="15.5" height="15.5" rx="4.5" fill="var(--amber)"/>
+        <rect x="3" y="21.5" width="15.5" height="15.5" rx="4.5" fill="var(--sky)"/>
+        <rect x="21.5" y="21.5" width="15.5" height="15.5" rx="4.5" fill="var(--rose)"/>
+        <path d="M6 10.75h9.5M24.5 10.75H34M6 29.25h9.5M24.5 29.25H34" stroke="#07070b" stroke-width="1.6" stroke-dasharray="2 2.2" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="brand-name">Patchwork</div>
+        <div class="brand-sub">for RIVALS</div>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Pages">
+      <span class="nav-indicator" aria-hidden="true"></span>
+      <button class="nav-item active" data-page="swaps">
+        <svg viewBox="0 0 24 24"><path d="M4 7h11l-3-3M20 17H9l3 3"/></svg><span>Swaps</span><kbd>1</kbd>
+      </button>
+      <button class="nav-item" data-page="activity">
+        <svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Activity</span><b class="nav-badge" id="activity-badge" hidden>0</b><kbd>2</kbd>
+      </button>
+      <button class="nav-item" data-page="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span>Settings</span><kbd>3</kbd>
+      </button>
+    </nav>
+
+    <div class="power-card">
+      <button id="power" class="power" aria-label="Start Patchwork">
+        <span class="ring"></span><span class="ring r2"></span>
+        <svg viewBox="0 0 24 24"><path d="M12 3v8M6.6 6.6a8 8 0 1 0 10.8 0"/></svg>
+      </button>
+      <div class="power-text">
+        <div id="power-label" class="power-label">Start</div>
+        <div id="status-pill" class="pill idle"><i></i><span>Stopped</span></div>
+      </div>
+    </div>
+    <div class="side-foot"><span id="version">v</span><span class="dot-sep">·</span><span id="active-count">0 swaps on</span></div>
+  </aside>
+
+  <main class="pages">
+    <!-- ===================== SWAPS ===================== -->
+    <section class="page active" id="page-swaps">
+      <header class="page-head">
+        <div>
+          <h1>Swaps</h1>
+          <p class="sub">Change how RIVALS looks and sounds, on this PC only.</p>
+        </div>
+        <div class="head-actions">
+          <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg><input id="search" placeholder="Search swaps" spellcheck="false"><kbd>Ctrl F</kbd></label>
+          <button class="btn ghost" id="import-btn"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/></svg>Import</button>
+          <div class="menu-wrap">
+            <button class="btn ghost" id="export-btn"><svg viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 20h14"/></svg>Export</button>
+            <div class="menu" id="export-menu" hidden>
+              <button data-fmt="patchwork">As a Patchwork preset</button>
+              <button data-fmt="fleasion">As a Fleasion preset</button>
+            </div>
+          </div>
+          <button class="btn primary burst" id="new-swap"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New swap</button>
+        </div>
+      </header>
+
+      <div class="profiles">
+        <div class="profile-strip" id="profile-strip"></div>
+        <button class="chip add" id="new-profile" title="New profile"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div class="menu-wrap">
+          <button class="icon-btn" id="profile-menu-btn" title="Profile options"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          <div class="menu right" id="profile-menu" hidden>
+            <button data-act="rename">Rename</button>
+            <button data-act="duplicate">Duplicate</button>
+            <button data-act="configs">Open configs folder</button>
+            <button data-act="delete" class="danger">Delete profile</button>
+          </div>
+        </div>
+      </div>
+
+      <svg class="wave" viewBox="0 0 1200 24" preserveAspectRatio="none" aria-hidden="true"><path d="M0 12 Q 25 2 50 12 T 100 12 T 150 12 T 200 12 T 250 12 T 300 12 T 350 12 T 400 12 T 450 12 T 500 12 T 550 12 T 600 12 T 650 12 T 700 12 T 750 12 T 800 12 T 850 12 T 900 12 T 950 12 T 1000 12 T 1050 12 T 1100 12 T 1150 12 T 1200 12 T 1250 12 T 1300 12"/></svg>
+
+      <div class="list-head">
+        <span></span><span id="list-title">Swaps</span><span>Mode</span><span>Asset IDs</span><span>Replacement</span><span></span>
+      </div>
+      <div class="swap-list" id="swap-list" tabindex="0" aria-label="Swaps"></div>
+      <div class="list-foot">
+        <span id="selection-info"></span>
+        <span class="foot-actions">
+          <button class="btn small ghost" id="undo-btn"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>Undo <kbd>Ctrl Z</kbd></button>
+          <button class="btn small ghost" id="clear-cache"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Clear Roblox cache</button>
+        </span>
+      </div>
+    </section>
+
+    <!-- ===================== ACTIVITY ===================== -->
+    <section class="page" id="page-activity">
+      <header class="page-head">
+        <div>
+          <h1>Activity</h1>
+          <p class="sub">Everything Patchwork does, live.</p>
+        </div>
+      </header>
+      <div class="stats">
+        <div class="stat card"><div class="stat-label">Swapped this session</div><div class="stat-value" id="stat-hits">0</div></div>
+        <div class="stat card"><div class="stat-label">Roblox is in</div><div class="stat-value small" id="stat-game">—</div></div>
+        <div class="stat card"><div class="stat-label">Swaps switched on</div><div class="stat-value" id="stat-active">0</div></div>
+      </div>
+      <div class="filters" id="filters">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="hit">Swaps</button>
+        <button class="chip" data-filter="game">Game</button>
+        <button class="chip" data-filter="warn">Warnings</button>
+      </div>
+      <div class="feed card" id="feed"></div>
+    </section>
+
+    <!-- ===================== SETTINGS ===================== -->
+    <section class="page" id="page-settings">
+      <header class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p class="sub">Keep Patchwork's footprint small.</p>
+        </div>
+      </header>
+      <div class="settings-grid">
+        <div class="card setting-card wide">
+          <div class="card-title"><span class="tag mint">RIVALS only</span></div>
+          <p>Swaps apply only while you're in RIVALS (place <code id="rivals-place"></code>). Patchwork reads Roblox's own log to see which game you joined. In any other game, Roblox loads its normal assets.</p>
+        </div>
+        <div class="card setting-card wide">
+          <div class="card-title">Staying safe</div>
+          <p>Patchwork never touches the game's memory or your account.</p>
+          <label class="toggle-row"><span><b>Put Roblox back to normal when I press Stop</b><small>Removes Patchwork's certificate and setting and clears the asset cache.</small></span><span class="switch"><input type="checkbox" data-setting="restore_on_stop"><i></i></span></label>
+          <label class="toggle-row"><span><b>Remind me that asset-ID swaps are visible</b><small>ID swaps make Roblox ask its servers for a different asset. Link and file swaps don't.</small></span><span class="switch"><input type="checkbox" data-setting="warn_id_swaps"><i></i></span></label>
+        </div>
+        <div class="card setting-card">
+          <div class="card-title">Certificate</div>
+          <p>Patchwork made a certificate just for this PC and added it to Roblox's own list (not Windows'). Removing it stops Patchwork and takes it out of every Roblox install.</p>
+          <button class="btn danger" id="remove-cert">Remove certificate</button>
+        </div>
+        <div class="card setting-card">
+          <div class="card-title">Data</div>
+          <p>Profiles, settings, downloads and the certificate live in <code id="home-path"></code></p>
+          <div class="row-btns">
+            <button class="btn ghost" id="open-home">Open data folder</button>
+            <button class="btn ghost" id="clear-downloads">Clear downloaded files</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Editor drawer -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h2 id="drawer-title">New swap</h2>
+    <button class="icon-btn" id="drawer-close" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form id="swap-form" autocomplete="off">
+    <label class="field"><span>Name</span><input id="f-name" placeholder="Optional, e.g. Hit sound"></label>
+    <label class="field"><span>Asset IDs to replace</span><textarea id="f-ids" rows="2" placeholder="Separate with commas or spaces. Links and rbxassetid:// work too."></textarea></label>
+    <label class="field"><span>Replace with</span>
+      <div class="with-row"><input id="f-with" placeholder="Asset ID, web link, or a file"><button type="button" class="btn ghost" id="browse">Browse…</button></div>
+    </label>
+    <div class="detect" id="detect"><i></i><span>Type an asset ID, paste a link, or browse for a file.</span></div>
+    <div class="hint-box">
+      <b>Formats Roblox expects</b>
+      <span>Images: PNG, JPG, WEBP · Sounds: OGG, MP3 · Meshes: .mesh</span>
+    </div>
+    <div class="drawer-actions">
+      <button type="button" class="btn danger ghost" id="drawer-delete" hidden>Delete</button>
+      <span class="grow"></span>
+      <button type="button" class="btn ghost" id="drawer-cancel">Cancel</button>
+      <button type="submit" class="btn primary burst" id="drawer-save">Add swap</button>
+    </div>
+  </form>
+</aside>
+
+<!-- Modal -->
+<div class="modal-wrap" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-icon" id="modal-icon"></div>
+    <h2 id="modal-title"></h2>
+    <div class="modal-body" id="modal-body"></div>
+    <input class="modal-input" id="modal-input" hidden>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

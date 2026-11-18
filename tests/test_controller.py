@@ -1,0 +1,136 @@
+import shutil
+import socket
+import time
+from pathlib import Path
+
+import pytest
+
+from patchwork.controller import Controller, UserError
+
+EXAMPLE = Path(__file__).with_name("fleasion_example.json")
+
+
+@pytest.fixture
+def ctl(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("TEMP", raising=False)
+    c = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs")
+    yield c
+    c.shutdown()
+
+
+def test_snapshot_shape(ctl):
+    snap = ctl.snapshot()
+    assert snap["editing"] == "Default" and snap["profiles"][0]["enabled"]
+    assert snap["status"] == {"tone": "idle", "short": "Stopped", "text": "Stopped"}
+    assert snap["rivals"]["place_id"] == 17625359962
+    assert not snap["notice_accepted"]
+    ctl.accept_notice()
+    assert ctl.snapshot()["notice_accepted"]
+
+
+def test_swap_lifecycle_and_undo(ctl):
+    assert ctl.save_swap("Hit", "1, 2", "https://example.com/hit.ogg") == {"index": 0}
+    # First asset-ID swap asks for confirmation, then goes through.
+    assert ctl.save_swap("", "3", "rbxassetid://4") == {"confirm": "id_swap"}
+    assert ctl.save_swap("", "3", "rbxassetid://4", confirmed=True) == {"index": 1}
+    assert ctl.save_swap("", "5", "6") == {"index": 2}  # only asked once per session
+    swaps = ctl.snapshot()["swaps"]
+    assert [s["mode"] for s in swaps] == ["Link", "ID", "ID"]
+    assert ctl.snapshot()["active_count"] == 3
+
+    ctl.save_swap("Hit 2", "1", "https://example.com/hit2.ogg", index=0)
+    assert ctl.snapshot()["swaps"][0]["name"] == "Hit 2"
+    ctl.set_swaps_enabled([0, 1], False)
+    assert ctl.snapshot()["active_count"] == 1
+    assert ctl.remove_swaps([0, 2, 99]) == 2
+    assert len(ctl.snapshot()["swaps"]) == 1
+    assert ctl.undo() and len(ctl.snapshot()["swaps"]) == 3
+    with pytest.raises(UserError):
+        ctl.save_swap("", "", "5")
+    with pytest.raises(UserError):
+        ctl.save_swap("", "1", "5", index=42, confirmed=True)
+
+
+def test_profiles(ctl):
+    assert ctl.new_profile("Skins") == "Skins"
+    assert ctl.snapshot()["editing"] == "Skins"
+    ctl.set_profile_enabled("Skins", True)
+    assert ctl.rename_profile("Weapon skins") == "Weapon skins"
+    assert ctl.duplicate_profile() == "Weapon skins copy"
+    ctl.select_profile("Weapon skins")
+    ctl.delete_profile()
+    names = [p["name"] for p in ctl.snapshot()["profiles"]]
+    assert "Weapon skins" not in names and "Weapon skins copy" in names
+    with pytest.raises(UserError):
+        ctl.select_profile("nope")
+    with pytest.raises(UserError):
+        ctl.new_profile("  ")
+
+
+def test_import_asks_about_links_then_imports(ctl, tmp_path):
+    path = tmp_path / "euph.json"
+    shutil.copy(EXAMPLE, path)
+    first = ctl.import_preset(str(path))
+    assert first["confirm"] == "links" and first["count"] == 8
+    assert first["hosts"] == ["files.example.com", "raw.githubusercontent.com"]
+    done = ctl.import_preset(str(path), confirmed=True)
+    assert done["name"] == "euph" and done["count"] == 8
+    snap = ctl.snapshot()
+    assert snap["editing"] == "euph" and next(p for p in snap["profiles"] if p["name"] == "euph")["enabled"]
+    out = tmp_path / "out.json"
+    assert ctl.export_preset("fleasion", str(out)) == {"skipped": []}
+    assert out.read_text().startswith('{\n  "replacement_rules"')
+    with pytest.raises(UserError):
+        ctl.import_preset(str(tmp_path / "missing.json"))
+
+
+def test_detect(ctl):
+    assert ctl.detect("") == {"kind": None}
+    assert ctl.detect("rbxassetid://5")["mode"] == "ID"
+    assert ctl.detect("https://x.example/a.png")["mode"] == "Link"
+    assert "error" in ctl.detect("C:/nope/missing.png")
+
+
+def test_events_long_poll(ctl):
+    start = ctl.snapshot()["seq"]
+    ctl.log("hello", "warn")
+    events = ctl.events_after(start, timeout=1)
+    assert any(e["kind"] == "log" and e["data"]["text"] == "hello" for e in events)
+    t = time.monotonic()
+    assert ctl.events_after(events[-1]["seq"], timeout=0.2) == []
+    assert time.monotonic() - t >= 0.15
+
+
+def test_settings(ctl):
+    ctl.set_setting("restore_on_stop", False)
+    assert ctl.snapshot()["settings"]["restore_on_stop"] is False
+    with pytest.raises(UserError):
+        ctl.set_setting("evil", True)
+
+
+def test_start_and_stop_with_regular_proxy(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("TEMP", raising=False)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", proxy_mode=f"regular@{port}")
+    try:
+        ctl.start()
+        for _ in range(100):
+            if ctl.snapshot()["running"]:
+                break
+            time.sleep(0.1)
+        snap = ctl.snapshot()
+        assert snap["running"] and snap["status"]["short"] == "Waiting"
+        ctl.stop()
+        for _ in range(100):
+            if not ctl.snapshot()["running"] and not ctl.busy:
+                break
+            time.sleep(0.1)
+        assert not ctl.snapshot()["running"]
+        texts = [e["text"] for e in ctl.activity_log()]
+        assert any("Patchwork is running" in t for t in texts) and "Patchwork stopped." in texts
+    finally:
+        ctl.shutdown()

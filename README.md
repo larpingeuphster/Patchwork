@@ -34,7 +34,7 @@ To read Roblox's encrypted asset lookups, Patchwork needs Roblox to trust a cert
 - Nothing is added to the Windows certificate store, so other apps don't trust it.
 - Patchwork also sets one Roblox client setting, `DFFlagHttpUseEmbeddedCaCerts = False`, in each version's `ClientSettings\ClientAppSettings.json`, so Roblox reads `cacert.pem` and not its built-in certificate list. Fleasion sets the same one. Your other settings in that file are kept.
 - Launchers like Bloxstrap and Fishstrap copy their `Modifications` folder over Roblox on every launch. Patchwork makes the same two changes there, so the launcher doesn't undo them.
-- **Remove certificate** (on the **Settings** tab) takes it and the setting out of every Roblox install and launcher folder, and deletes the key.
+- **Remove certificate** (on the **Settings** page) takes it and the setting out of every Roblox install and launcher folder, and deletes the key.
 
 ## Can I get banned?
 
@@ -43,8 +43,8 @@ Possibly. No asset swapper can promise you won't be. Roblox's Terms of Use forbi
 - **The game itself is never touched.** Patchwork doesn't inject code into Roblox or change it in memory. That's what Roblox's anti-cheat mainly looks for.
 - **Account and network traffic is left alone.** Logins, chat and game servers pass through untouched, and Patchwork never uses your account or sends anything to Roblox on its own.
 - **Risky features are left out:** no custom FastFlags (beyond the one certificate setting above), no account tools and no username spoofing.
-- **Link and file swaps don't change what Roblox asks its servers for.** Asset-ID swaps do, and Roblox could see that, so Patchwork reminds you when you add one. You can turn that reminder off on the **Settings** tab.
-- **Stop puts Roblox back to normal.** When you press **Stop**, or close Patchwork while it's running, Patchwork removes its certificate and setting and clears the asset cache. Turn this off on the **Settings** tab if you'd rather keep them between sessions.
+- **Link and file swaps don't change what Roblox asks its servers for.** Asset-ID swaps do, and Roblox could see that, so Patchwork reminds you when you add one. You can turn that reminder off on the **Settings** page.
+- **Stop puts Roblox back to normal.** When you stop Patchwork with the power button, or close Patchwork while it's running, Patchwork removes its certificate and setting and clears the asset cache. Turn this off on the **Settings** page if you'd rather keep them between sessions.
 
 Two things are up to you:
 
@@ -57,26 +57,40 @@ Only swap in files you made or are allowed to use. Patchwork doesn't come with a
 
 1. Download `Patchwork.exe` from the [Releases](../../releases) page, or from the latest successful **Build** run under the Actions tab.
 2. Run it. Windows SmartScreen may warn that the app is unrecognized, because the build isn't code-signed. Some antivirus tools also flag apps that redirect network traffic. The source is all here if you want to check it or build it yourself.
-3. The first time you press **Start**, Windows asks for permission to run mitmproxy's redirector. It needs admin rights to capture Roblox's connections.
+3. The first time you press the power button, Windows asks for permission to run mitmproxy's redirector. It needs admin rights to capture Roblox's connections.
 
 ## Use
 
-The **Replacer** tab works with profiles. A profile is a named list of swaps, for example "Skyboxes" or "Hit sounds". Edit one profile at a time, and switch on as many as you like.
+Patchwork's window has three pages in the sidebar: **Swaps**, **Activity** and **Settings**. The power button at the bottom of the sidebar starts and stops Patchwork. The badge next to it shows whether you're in RIVALS and swaps are on, paused, or waiting.
 
-1. Pick a profile under **Editing**, or press **New** to make one.
-2. Fill in the form under the swap list and press **Add New**:
-   - **Asset IDs:** the IDs to replace. Plain IDs, `rbxassetid://` and Roblox links all work.
-   - **Replace with:** another asset ID, a direct web link to a file, or a file on your PC (**Browse…**). Patchwork works out which one you typed.
-3. Tick the profile under **Enabled**.
-4. Press **Start**, then open Roblox (or close it and open it again) and join RIVALS. The status at the top shows whether you're in RIVALS and swaps are on.
+### Swaps
 
-Other controls:
-- **Load Selected** copies a swap into the form, and **Update Selected** saves your edits back to it. Double-clicking a row loads it too.
-- **On / Off** and **Remove** act on the selected rows.
-- **Ctrl+Z** undoes the last change.
-- The **Activity** tab shows every swap as Roblox loads it.
+Swaps are grouped into profiles, for example "Skins" or "Hit sounds". Each profile is a chip above the list. Click a chip's name to edit that profile, and flip its switch to turn the profile on or off. The **+** next to the chips makes a new profile, and **⋯** renames, duplicates or deletes the one you're editing.
 
-Roblox keeps assets it has already downloaded. **Start** clears that cache automatically when Roblox is closed. If a swap you add later doesn't show up, close Roblox, press **Clear Cache**, and join again. Do the same after turning a swap off.
+1. Press **New swap**. A panel slides in.
+2. Fill in **Asset IDs to replace**. Plain IDs, `rbxassetid://` and Roblox links all work.
+3. Fill in **Replace with**: another asset ID, a direct web link to a file, or a file on your PC (**Browse…**). Patchwork shows what it detected as you type.
+4. Switch the profile on.
+5. Press the power button, then open Roblox (or close it and open it again) and join RIVALS.
+
+Each swap has its own on/off switch. Hover a swap to edit or remove it, or double-click it to edit.
+
+Keyboard shortcuts:
+
+| Keys | What they do |
+| --- | --- |
+| **Ctrl+N** | New swap |
+| **Ctrl+F** | Search swaps |
+| **Ctrl+Z** | Undo the last change |
+| **Ctrl+A** | Select every swap |
+| **Space** | Turn the selected swaps on or off |
+| **Delete** | Remove the selected swaps |
+| **Enter** | Edit the selected swap |
+| **1**, **2**, **3** | Switch pages |
+
+The **Activity** page shows every swap as Roblox loads it, which game you're in, and any warnings.
+
+Roblox keeps assets it has already downloaded. Starting Patchwork clears that cache automatically when Roblox is closed. If a swap you add later doesn't show up, close Roblox, press **Clear Roblox cache**, and join again. Do the same after turning a swap off.
 
 ### Web links
 
@@ -84,10 +98,10 @@ For a link, Patchwork downloads the file once and keeps a copy in `%APPDATA%\Pat
 
 ### Presets and Fleasion files
 
-- **Import…** loads a preset, either a Patchwork preset or a Fleasion config with `replacement_rules`, as a new profile. Patchwork asks first if the preset downloads files from the web.
+- **Import** loads a preset, either a Patchwork preset or a Fleasion config with `replacement_rules`, as a new profile. Patchwork asks first if the preset downloads files from the web.
 - From Fleasion configs, Patchwork reads the `id` and `cdn` modes. Rules using other modes are listed as skipped.
-- **Export…** saves the profile you're editing, as a Patchwork preset or a Fleasion preset. Fleasion presets can't point at files on your PC, so those swaps are left out.
-- Each profile is a `.json` file in `%APPDATA%\Patchwork\configs` (**Open Configs**). You can drop preset files straight into that folder; they show up next time Patchwork starts.
+- **Export** saves the profile you're editing, as a Patchwork preset or a Fleasion preset. Fleasion presets can't point at files on your PC, so those swaps are left out.
+- Each profile is a `.json` file in `%APPDATA%\Patchwork\configs` (**⋯ → Open configs folder**). You can drop preset files straight into that folder; they show up next time Patchwork starts.
 - Replacement files kept in a subfolder there, such as `configs\Sky\up.png`, are saved as `/Sky/up.png`. A profile and its files can then be shared as one folder.
 
 ### Replacement files
@@ -104,7 +118,7 @@ You need the **image** ID of a texture or decal, not the decal's own ID.
 
 ### Settings
 
-`%APPDATA%\Patchwork\settings.json` holds your Settings-tab choices, plus `intercept_hosts`, the hosts Patchwork decrypts. Leave `intercept_hosts` alone unless you know you need it.
+`%APPDATA%\Patchwork\settings.json` holds your Settings-page choices, plus `intercept_hosts`, the hosts Patchwork decrypts. Leave `intercept_hosts` alone unless you know you need it.
 
 ## Supported installs
 
@@ -135,6 +149,12 @@ Start the app from source:
 python -m patchwork
 ```
 
+Open the interface in your web browser instead of its own window (handy on Linux or macOS for working on the interface):
+
+```bash
+python -m patchwork --browser
+```
+
 Build `dist\Patchwork.exe`:
 
 ```bash
@@ -161,7 +181,10 @@ Every push runs `.github/workflows/build.yml`, which tests Patchwork on Linux an
 | `patchwork/profiles.py` | Profiles in `configs/`, settings, undo |
 | `patchwork/presets.py` | Patchwork and Fleasion preset import/export |
 | `patchwork/downloads.py` | Download cache for web-link swaps |
-| `patchwork/gui.py` | The desktop window |
+| `patchwork/controller.py` | Everything the window does: profiles, swaps, Start/Stop, safety |
+| `patchwork/server.py` | Serves the interface and its API on 127.0.0.1, protected by a per-launch token |
+| `patchwork/app.py` | Opens the window (pywebview with Edge WebView2) |
+| `patchwork/webui/` | The interface: `index.html`, `style.css`, `app.js` |
 
 ## License
 

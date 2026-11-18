@@ -6,7 +6,7 @@ def _entry() -> None:
         from patchwork.selfcheck import run
 
         sys.exit(run(sys.argv[2]))
-    from patchwork.gui import main
+    from patchwork.app import main
 
     main()
 

@@ -59,21 +59,34 @@ def run(report_path: str) -> int:
         SwapAddon(Config())
         return f"{len(mitm_addons.default_addons())} mitmproxy addons"
 
-    def gui() -> str:
-        import tkinter
+    def ui() -> str:
+        from . import app as _app  # noqa: F401
+        from .server import API_METHODS, WEBUI_DIR
 
-        from . import gui as _gui  # noqa: F401
+        for name in ("index.html", "style.css", "app.js"):
+            if not (WEBUI_DIR / name).is_file():
+                raise RuntimeError(f"missing {WEBUI_DIR / name}")
+        from .controller import Controller
 
-        icon = Path(__file__).with_name("assets") / "patchwork.png"
-        if not icon.exists():
-            raise RuntimeError(f"missing {icon}")
-        return f"Tk {tkinter.TkVersion}"
+        missing = [m for m in API_METHODS if not callable(getattr(Controller, m, None))]
+        if missing:
+            raise RuntimeError(f"API methods missing from Controller: {missing}")
+        return f"{len(API_METHODS)} API methods"
+
+    def window() -> str:
+        if sys.platform != "win32":
+            return "skipped (not Windows)"
+        import webview
+        from webview.platforms import edgechromium  # noqa: F401  (needs pythonnet + WebView2 loader)
+
+        return f"pywebview {getattr(webview, '__version__', '')}".strip()
 
     check("mitmproxy local mode", local_mode)
     check("Windows redirector", redirector)
     check("certificate authority", certificate)
     check("swap addon", addons)
-    check("GUI", gui)
+    check("interface", ui)
+    check("native window", window)
 
     lines.append("PASS" if ok else "FAIL")
     Path(report_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
