@@ -43,17 +43,39 @@ jobs:
           name: Patchwork-windows
           path: dist/Patchwork.exe
 
+  # Publishes a GitHub Release with Patchwork.exe when main has a version that
+  # hasn't been released yet (the version comes from patchwork/__init__.py).
+  # Pushing a v* tag by hand also publishes that release.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: [test, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - name: Work out the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('patchwork/__init__.py').read()).group(1))")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "v$version is already released."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
+        if: steps.version.outputs.exists == 'false'
         with:
           name: Patchwork-windows
       - uses: softprops/action-gh-release@v2
+        if: steps.version.outputs.exists == 'false'
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Patchwork ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: Patchwork.exe
           generate_release_notes: true
