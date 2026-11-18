@@ -566,7 +566,8 @@
       html: `<p>Patchwork changes how ${name} looks and sounds <b>on your PC only</b>.</p>
         <ul>
           <li>Roblox's rules don't allow third-party tools that change the game, so any asset swapper carries some risk of a ban. Patchwork keeps that risk low (it never touches the game's memory or your account), but nothing can make it zero.</li>
-          <li>Keep swaps cosmetic. Swaps that give you an advantage, like see-through walls or easier-to-spot enemies, are what ${name} bans players for.</li>
+          <li><b>You can be banned from ${name} for using skin changers.</b> Swapping weapon or character skins with Patchwork counts, even though only you can see it.</li>
+          <li>Never use swaps that give you an advantage, like see-through walls or easier-to-spot enemies.</li>
           <li>Try it on an alt account first.</li>
         </ul>
         <p>Use Patchwork at your own risk.</p>`,

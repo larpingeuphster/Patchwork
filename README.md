@@ -38,7 +38,11 @@ To read Roblox's encrypted asset lookups, Patchwork needs Roblox to trust a cert
 
 ## Can I get banned?
 
-Possibly. No asset swapper can promise you won't be. Roblox's Terms of Use forbid unauthorized third-party software that modifies the experience, and Roblox and the RIVALS developers decide who gets banned. **Use Patchwork at your own risk.** It's built to keep the risk low:
+Possibly. No asset swapper can promise you won't be. Roblox's Terms of Use forbid unauthorized third-party software that modifies the experience, and Roblox and the RIVALS developers decide who gets banned. **Use Patchwork at your own risk.**
+
+> **You can be banned from RIVALS for using skin changers.** Swapping weapon or character skins with Patchwork makes it a skin changer, even though only you can see the change. Think carefully before using skin swaps on an account you care about.
+
+Patchwork is built to keep the risk low:
 
 - **The game itself is never touched.** Patchwork doesn't inject code into Roblox or change it in memory. That's what Roblox's anti-cheat mainly looks for.
 - **Account and network traffic is left alone.** Logins, chat and game servers pass through untouched, and Patchwork never uses your account or sends anything to Roblox on its own.
@@ -48,7 +52,7 @@ Possibly. No asset swapper can promise you won't be. Roblox's Terms of Use forbi
 
 Two things are up to you:
 
-- **Keep swaps cosmetic.** Swaps that give you an advantage, like see-through walls or easier-to-spot enemies, are what games ban players for.
+- **Never use swaps that give you an advantage**, like see-through walls or easier-to-spot enemies. Even purely cosmetic swaps aren't risk-free: skin changers can get you banned too.
 - **Try Patchwork on an alt account first.**
 
 Only swap in files you made or are allowed to use. Patchwork doesn't come with any Roblox or third-party assets.
