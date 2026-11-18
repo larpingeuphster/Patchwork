@@ -55,8 +55,8 @@ Only swap in files you made or are allowed to use. Patchwork doesn't come with a
 
 ## Install
 
-1. Download `Patchwork.exe` from the [Releases](../../releases) page, or from the latest successful **Build** run under the Actions tab.
-2. Run it. Windows SmartScreen may warn that the app is unrecognized, because the build isn't code-signed. Some antivirus tools also flag apps that redirect network traffic. The source is all here if you want to check it or build it yourself.
+1. Download `Patchwork.exe` from the [Releases](../../releases) page. Only download it from there: copies from anywhere else could have been changed.
+2. Run it. Windows SmartScreen may warn that the app is unrecognized, because the build isn't code-signed. Some antivirus tools also flag apps that redirect network traffic. The source is published here so you can check exactly what Patchwork does.
 3. The first time you press **Start**, Windows asks for permission to run mitmproxy's redirector. It needs admin rights to capture Roblox's connections.
 
 ## Use
@@ -136,64 +136,36 @@ You need the **image** ID of a texture or decal, not the decal's own ID.
 
 Roblox installs updates into a new folder. While Patchwork is running, it trusts its certificate in new versions every 20 seconds.
 
-## Build from source
+## Why the source is public
 
-You need Python 3.12 or newer (from python.org, with Tcl/Tk).
+Patchwork's source code is published so anyone can check that it is safe, and isn't a RAT, a token logger or anything else hidden. It isn't here as a build kit: use the official `Patchwork.exe` from the [Releases](../../releases) page.
 
-Install Patchwork with its development tools:
+Things worth checking, and where to look:
 
-```bash
-pip install -e ".[dev]"
-```
+| Question | Where to look |
+| --- | --- |
+| Does it touch my Roblox account or cookies? | No code reads browser data, cookies or Roblox login files. Search the source for `ROBLOSECURITY` or `cookie`: nothing matches. |
+| What does it connect to? | Only Roblox's asset server (`patchwork/proxy.py`), the web links in your own swaps (`patchwork/downloads.py`), and its own window on `127.0.0.1` (`patchwork/server.py`). It never sends anything about you anywhere. |
+| What traffic can it read? | Only Roblox's own traffic, and of that only `assetdelivery.roblox.com` (`intercept_hosts` in `patchwork/config.py`, used by `patchwork/proxy.py`). |
+| What does it change on my PC? | Roblox's `ssl\cacert.pem` and `ClientAppSettings.json`, the asset cache, and its own `%APPDATA%\Patchwork` folder (`patchwork/roblox.py`). Stop undoes the Roblox changes. |
+| Does it inject into the game? | No. Nothing in the source touches Roblox's memory or process. |
 
-Run the tests:
-
-```bash
-pytest
-```
-
-Start the app from source:
-
-```bash
-python -m patchwork
-```
-
-Open the interface in your web browser instead of its own window (handy on Linux or macOS for working on the interface):
-
-```bash
-python -m patchwork --browser
-```
-
-Build `dist\Patchwork.exe`:
-
-```bash
-pyinstaller packaging/patchwork.spec --noconfirm
-```
-
-Check that a build has everything it needs (this writes a report file):
-
-```bash
-dist\Patchwork.exe --self-check selfcheck.txt
-```
-
-Every push runs `.github/workflows/build.yml`, which tests Patchwork on Linux and Windows, builds the `.exe` and runs its self-check. Pushing a `v*` tag publishes a release.
-
-## Project layout
+How the code is organised:
 
 | Path | What it does |
 | --- | --- |
-| `patchwork/rules.py` | Rewrites asset-delivery requests and responses (no mitmproxy dependency) |
-| `patchwork/proxy.py` | The mitmproxy addon and the background proxy runner |
+| `patchwork/rules.py` | Rewrites asset-delivery requests and responses |
+| `patchwork/proxy.py` | The local proxy and its swap logic |
 | `patchwork/roblox.py` | Finds Roblox installs, adds and removes the certificate and client setting, clears the cache |
 | `patchwork/games.py` | Reads Roblox's log to tell when you're in RIVALS |
 | `patchwork/config.py` | The swap model and "Replace with" detection |
 | `patchwork/profiles.py` | Profiles in `configs/`, settings, undo |
 | `patchwork/presets.py` | Patchwork and Fleasion preset import/export |
 | `patchwork/downloads.py` | Download cache for web-link swaps |
-| `patchwork/controller.py` | Everything the window does: profiles, swaps, Start/Stop, safety |
-| `patchwork/server.py` | Serves the interface and its API on 127.0.0.1, protected by a per-launch token |
-| `patchwork/app.py` | Opens the window (pywebview with Edge WebView2) |
-| `patchwork/webui/` | The interface: `index.html`, `style.css`, `app.js` |
+| `patchwork/controller.py` | Everything the window does |
+| `patchwork/server.py` | Serves the interface on 127.0.0.1, protected by a per-launch token |
+| `patchwork/app.py` | Opens the window |
+| `patchwork/webui/` | The interface |
 
 ## License
 
