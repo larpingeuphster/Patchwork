@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,11 +103,16 @@ class GameWatcher:
         on_change: Callable[[GameState], None],
         rivals_universes: set[int] | None = None,
         interval: float = 0.25,
+        is_running: Callable[[], bool] | None = None,
     ):
         self.directory = directory
         self.on_change = on_change
         self.interval = interval
         self.state = GameState(rivals_universes=set(rivals_universes or ()))
+        # Roblox's last log still says "in RIVALS" after Roblox has closed, so the
+        # in-game state is only trusted while Roblox is actually running.
+        self.is_running = is_running
+        self._last_alive_check = 0.0
         self._file: Path | None = None
         self._pos = 0
         self._partial = ""
@@ -133,8 +139,29 @@ class GameWatcher:
                 pass
             self._stop.wait(self.interval)
 
+    def _check_alive(self) -> None:
+        if self.is_running is None or not self.state.in_game:
+            return
+        now = time.monotonic()
+        if now - self._last_alive_check < 3:
+            return
+        self._last_alive_check = now
+        try:
+            alive = self.is_running()
+        except Exception:
+            return
+        if not alive:
+            self.state.place_id = self.state.universe_id = None
+            self.on_change(self.state)
+
     def poll(self) -> None:
         """Read whatever Roblox has written since the last poll (also used by tests)."""
+        try:
+            self._read()
+        finally:
+            self._check_alive()
+
+    def _read(self) -> None:
         if self.directory is None or not self.directory.is_dir():
             return
         newest = newest_player_log(self.directory)

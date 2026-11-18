@@ -61,6 +61,7 @@ class Controller:
             log_dir if log_dir is not None else games.log_dir(),
             on_change=lambda state: self._game_changed(),
             rivals_universes=set(self.store.rivals_universes),
+            is_running=(lambda: bool(roblox.running_clients())) if sys.platform == "win32" else None,
         )
         self.runner = ProxyRunner(
             self.store.to_config(),
@@ -399,8 +400,13 @@ class Controller:
             self.runner.update_config(self.store.to_config())
             running = roblox.running_clients(tuple(self.store.processes))
             if not running:
-                removed, _ = roblox.clear_cache()
-                if removed:
+                removed, failed = roblox.clear_cache()
+                if failed:
+                    holders = roblox.lockers([Path(p) for p, _ in failed])
+                    who = ", ".join(f"{name} (PID {pid})" for pid, name in holders) or "another program"
+                    self.log(f"Couldn't clear Roblox's cache: it's in use by {who}. Close it and press Clear Cache, "
+                             "or Roblox will keep loading the assets it saved earlier.", "warn")
+                elif removed:
                     self.log("Cleared Roblox's asset cache so swaps load fresh.")
             self.busy = True
         self._changed()
@@ -527,10 +533,16 @@ class Controller:
         if running:
             raise UserError(f"{', '.join(running)} is running. Close Roblox, then clear the cache.")
         removed, failed = roblox.clear_cache()
+        if failed:
+            holders = roblox.lockers([Path(p) for p, _ in failed])
+            who = ", ".join(f"{name} (PID {pid})" for pid, name in holders) or "another program"
+            self.log(f"Couldn't clear all of Roblox's cache: it's in use by {who}. Close that program "
+                     "(check the system tray and Task Manager), then press Clear Cache again.", "warn")
+            raise UserError(f"Roblox's cache is in use by {who}.\n\nClose that program (check the system tray "
+                            "and Task Manager), then press Clear Cache again. Until the cache is cleared, "
+                            "Roblox keeps loading the assets it saved earlier.")
         self.log(f"Cleared Roblox's asset cache ({len(removed)} item(s))." if removed
                  else "Roblox's asset cache was already empty.")
-        for path, reason in failed:
-            self.log(f"Couldn't delete {path}: {reason}", "warn")
 
     def clear_downloads(self) -> None:
         shutil.rmtree(self.home / "downloads", ignore_errors=True)

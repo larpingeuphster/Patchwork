@@ -143,3 +143,12 @@ def test_start_asks_when_roblox_is_open(ctl, monkeypatch):
     monkeypatch.setattr(roblox, "close_clients", lambda *a, **k: closed.append(True) or ["RobloxPlayerBeta.exe"])
     assert ctl.start() == {"confirm": "roblox_open", "running": ["RobloxPlayerBeta.exe"]}
     assert not ctl.busy and not closed
+
+
+def test_clear_cache_names_the_program_holding_it(ctl, monkeypatch):
+    from patchwork import roblox
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: [])
+    monkeypatch.setattr(roblox, "clear_cache", lambda *a, **k: ([], [("C:/x/rbx-storage.db", "in use")]))
+    monkeypatch.setattr(roblox, "lockers", lambda paths: [(1234, "Fishstrap")])
+    with pytest.raises(UserError, match=r"Fishstrap \(PID 1234\)"):
+        ctl.clear_cache()

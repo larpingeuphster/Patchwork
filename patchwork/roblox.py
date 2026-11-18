@@ -302,6 +302,60 @@ def cache_paths() -> list[Path]:
     return paths
 
 
+def lockers(paths: list[Path]) -> list[tuple[int, str]]:
+    """Programs that have any of ``paths`` open, as (pid, name). Windows only; [] if unknown.
+
+    Uses the Windows Restart Manager, the same API Windows uses to say
+    "this file is open in another program".
+    """
+    if sys.platform != "win32" or not paths:
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rm = ctypes.WinDLL("rstrtmgr")
+
+        class RM_UNIQUE_PROCESS(ctypes.Structure):
+            _fields_ = [("dwProcessId", wintypes.DWORD), ("ProcessStartTime", wintypes.FILETIME)]
+
+        class RM_PROCESS_INFO(ctypes.Structure):
+            _fields_ = [
+                ("Process", RM_UNIQUE_PROCESS),
+                ("strAppName", wintypes.WCHAR * 256),
+                ("strServiceShortName", wintypes.WCHAR * 64),
+                ("ApplicationType", wintypes.DWORD),
+                ("AppStatus", wintypes.ULONG),
+                ("TSSessionId", wintypes.DWORD),
+                ("bRestartable", wintypes.BOOL),
+            ]
+
+        session = wintypes.DWORD()
+        key = ctypes.create_unicode_buffer(33)
+        if rm.RmStartSession(ctypes.byref(session), 0, key) != 0:
+            return []
+        try:
+            files = (wintypes.LPCWSTR * len(paths))(*[str(p) for p in paths])
+            if rm.RmRegisterResources(session, len(paths), files, 0, None, 0, None) != 0:
+                return []
+            needed, count, reasons = wintypes.UINT(0), wintypes.UINT(0), wintypes.DWORD()
+            rm.RmGetList(session, ctypes.byref(needed), ctypes.byref(count), None, ctypes.byref(reasons))
+            if needed.value == 0:
+                return []
+            infos = (RM_PROCESS_INFO * needed.value)()
+            count = wintypes.UINT(needed.value)
+            if rm.RmGetList(session, ctypes.byref(needed), ctypes.byref(count), infos, ctypes.byref(reasons)) != 0:
+                return []
+            found = {}
+            for i in range(count.value):
+                found[int(infos[i].Process.dwProcessId)] = infos[i].strAppName or "unknown program"
+            return sorted(found.items())
+        finally:
+            rm.RmEndSession(session)
+    except Exception:
+        return []
+
+
 def clear_cache(paths: list[Path] | None = None) -> tuple[list[str], list[tuple[str, str]]]:
     removed, failed = [], []
     for path in paths if paths is not None else cache_paths():

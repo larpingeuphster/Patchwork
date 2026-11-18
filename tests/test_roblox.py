@@ -128,3 +128,20 @@ def test_existing_launcher_cacert_is_patched_not_replaced(tmp_path):
     roblox.patch_modifications(mods, CA, None)
     roblox.unpatch_modifications(mods)
     assert (mods / "ssl" / "cacert.pem").read_text() == "# user's own bundle\n"
+
+
+def test_lockers_finds_this_process_on_windows(tmp_path):
+    import os
+    import sys
+
+    import pytest
+
+    if sys.platform != "win32":
+        assert roblox.lockers([tmp_path / "x"]) == []
+        pytest.skip("Restart Manager is Windows-only")
+    held = tmp_path / "rbx-storage.db"
+    with open(held, "w") as fh:
+        fh.write("x")
+        fh.flush()
+        found = roblox.lockers([held])
+    assert any(pid == os.getpid() for pid, _ in found), found

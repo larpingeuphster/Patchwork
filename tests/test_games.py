@@ -71,3 +71,16 @@ def test_watcher_without_log_dir():
     w.poll()
     assert not w.state.in_game
     assert games.log_dir() is None or isinstance(games.log_dir(), os.PathLike)
+
+
+def test_stale_log_is_ignored_when_roblox_is_closed(tmp_path):
+    (tmp_path / "x_Player_last.log").write_text(JOIN_RIVALS + "\n")
+    alive = [True]
+    changes = []
+    w = GameWatcher(tmp_path, changes.append, is_running=lambda: alive[0])
+    w.poll()
+    assert w.state.in_rivals
+    alive[0] = False
+    w._last_alive_check = 0
+    w.poll()
+    assert not w.state.in_game and len(changes) == 2
