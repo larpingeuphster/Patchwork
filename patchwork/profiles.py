@@ -50,6 +50,10 @@ class Store:
     editing: str = DEFAULT_PROFILE
     intercept_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_INTERCEPT_HOSTS))
     processes: list[str] = field(default_factory=lambda: list(DEFAULT_PROCESSES))
+    notice_accepted: bool = False  # the first-run risk notice
+    restore_on_stop: bool = True  # Stop also clears the cache and undoes Roblox changes
+    warn_id_swaps: bool = True  # explain that ID swaps are visible to Roblox's servers
+    rivals_universes: list[int] = field(default_factory=list)  # learned from Roblox's log
     warnings: list[str] = field(default_factory=list)
     _undo: list[Snapshot] = field(default_factory=list)
 
@@ -84,6 +88,10 @@ class Store:
         store.editing = settings.get("editing", DEFAULT_PROFILE)
         store.intercept_hosts = list(settings.get("intercept_hosts") or DEFAULT_INTERCEPT_HOSTS)
         store.processes = list(settings.get("processes") or DEFAULT_PROCESSES)
+        store.notice_accepted = bool(settings.get("notice_accepted", False))
+        store.restore_on_stop = bool(settings.get("restore_on_stop", True))
+        store.warn_id_swaps = bool(settings.get("warn_id_swaps", True))
+        store.rivals_universes = [int(u) for u in settings.get("rivals_universes", []) if str(u).isdigit()]
         if not store.profiles:
             store.profiles[DEFAULT_PROFILE] = []
             store.save_profile(DEFAULT_PROFILE)
@@ -131,6 +139,10 @@ class Store:
             "enabled": self.enabled,
             "intercept_hosts": self.intercept_hosts,
             "processes": self.processes,
+            "notice_accepted": self.notice_accepted,
+            "restore_on_stop": self.restore_on_stop,
+            "warn_id_swaps": self.warn_id_swaps,
+            "rivals_universes": self.rivals_universes,
         }
         _atomic_write(self.settings_path, json.dumps(data, indent=2))
 

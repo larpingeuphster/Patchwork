@@ -160,3 +160,23 @@ def test_broken_link_gives_404(tmp_path, monkeypatch):
         f = flow("GET", rules.FILE_PREFIX + rules.file_token(url))
         asyncio.run(addon.request(f))
         assert f.response.status_code == 404
+
+
+def test_allow_gate_pauses_swaps(tmp_path):
+    seen = []
+
+    def allow(place):
+        seen.append(place)
+        return place == 17625359962
+
+    cfg = Config(swaps=[Swap("Sky", [100], KIND_ASSET, "900")])
+    addon = SwapAddon(cfg, allow=allow, downloads_dir=tmp_path)
+    with taddons.context(addon):
+        f = flow("POST", "/v1/assets/batch", [{"requestId": "a", "assetId": 100}])
+        asyncio.run(addon.request(f))
+        assert json.loads(f.request.get_text())[0]["assetId"] == 100  # paused: no header, not in RIVALS
+        f = flow("POST", "/v1/assets/batch", [{"requestId": "a", "assetId": 100}])
+        f.request.headers["Roblox-Place-Id"] = "17625359962"
+        asyncio.run(addon.request(f))
+        assert json.loads(f.request.get_text())[0]["assetId"] == 900
+    assert seen == [None, 17625359962]

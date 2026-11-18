@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patchwork"
-version = "0.2.0"
-description = "Swap Roblox assets (textures, sounds, meshes) on your own PC."
+version = "0.3.0"
+description = "Swap RIVALS assets (textures, sounds, meshes) on your own PC."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

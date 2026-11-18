@@ -12,7 +12,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from . import __version__, presets, roblox
+from . import __version__, games, presets, roblox
 from .config import KIND_ASSET, KIND_FILE, KIND_URL, Swap, app_dir, swap_from_inputs
 from .profiles import Store
 from .proxy import ProxyRunner, ca_dir, ensure_ca
@@ -83,17 +83,24 @@ class App:
         self.home = app_dir()
         self.store = Store.load(self.home)
         self.events: queue.Queue = queue.Queue()
+        self.watcher = games.GameWatcher(
+            games.log_dir(),
+            on_change=lambda state: self.events.put(("game", None)),
+            rivals_universes=set(self.store.rivals_universes),
+        )
         self.runner = ProxyRunner(
             self.store.to_config(),
             self.home,
             on_hit=lambda hit: self.events.put(("hit", hit)),
             on_log=lambda level, msg: self.events.put(("log", (level, msg))),
+            allow=self._allow_swaps,
         )
+        self.id_warning_shown = False
         self.busy = False
         self.ca_pem: str | None = None
         self.enabled_vars: dict[str, tk.BooleanVar] = {}
 
-        root.title(f"Patchwork {__version__}")
+        root.title(f"Patchwork for {games.RIVALS_NAME} {__version__}")
         root.geometry("1040x760")
         root.minsize(860, 620)
         self._build()
@@ -102,10 +109,13 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         root.bind_all("<Control-z>", lambda e: self._undo())
         root.after(POLL_MS, self._poll)
-        self._log("Patchwork swaps Roblox assets on this PC only. Add swaps, tick a profile under "
-                  "Enabled, then press Start.")
+        self._log(f"Patchwork swaps {games.RIVALS_NAME} assets on this PC only, and only while you're in "
+                  f"{games.RIVALS_NAME}. Add swaps, tick a profile under Enabled, then press Start.")
         for warning in self.store.warnings:
             self._log(warning, "warn")
+        self.watcher.start()
+        if not self.store.notice_accepted:
+            root.after(100, self._first_run_notice)
 
     # ----- layout -----------------------------------------------------------------
 
@@ -116,6 +126,8 @@ class App:
         header = ttk.Frame(outer)
         header.pack(fill="x")
         ttk.Label(header, text="Patchwork", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text=f"for {games.RIVALS_NAME}", style="Subtitle.TLabel").pack(side="left", padx=(6, 0),
+                                                                                    pady=(6, 0))
         self.status = ttk.Label(header, style="Status.TLabel")
         self.status.pack(side="left", padx=16)
         self.start_btn = ttk.Button(header, text="Start", style="Accent.TButton", width=10, command=self._toggle)
@@ -239,10 +251,19 @@ class App:
             ttk.Label(box, text=text, style="PanelHint.TLabel", wraplength=760, justify="left").pack(anchor="w")
             return box
 
-        studio = section("Roblox Studio", "Also swap assets in Roblox Studio. Takes effect next time you press Start.")
-        self.studio_var = tk.BooleanVar(value="RobloxStudioBeta.exe" in self.store.processes)
-        ttk.Checkbutton(studio, text="Swap in Roblox Studio too", variable=self.studio_var,
-                        command=self._studio_changed).pack(anchor="w", pady=(8, 0))
+        section(games.RIVALS_NAME, f"Swaps only apply while you're in {games.RIVALS_NAME} (place "
+                f"{games.RIVALS_PLACE_ID}). Patchwork reads Roblox's own log to see which game you joined; "
+                "in any other game, Roblox loads its normal assets.")
+
+        safety = section("Staying safe", "Patchwork never touches the game's memory or your account. These "
+                         "options keep its footprint as small as possible.")
+        self.restore_var = tk.BooleanVar(value=self.store.restore_on_stop)
+        ttk.Checkbutton(safety, text="When I press Stop, put Roblox back to normal (remove Patchwork's "
+                        "certificate and setting, clear the asset cache)", variable=self.restore_var,
+                        command=self._safety_changed).pack(anchor="w", pady=(8, 0))
+        self.warn_id_var = tk.BooleanVar(value=self.store.warn_id_swaps)
+        ttk.Checkbutton(safety, text="Remind me that asset-ID swaps are visible to Roblox's servers",
+                        variable=self.warn_id_var, command=self._safety_changed).pack(anchor="w", pady=(4, 0))
 
         cert = section("Certificate", "Patchwork made a certificate for this PC and added it to Roblox's own "
                        "certificate list (not Windows'). Removing it stops Patchwork and takes it out of every "
@@ -460,8 +481,20 @@ class App:
         for entry in (self.name_entry, self.ids_entry, self.with_entry):
             entry.set("")
 
+    def _id_swap_ok(self, swap: Swap) -> bool:
+        if swap.kind != KIND_ASSET or not self.store.warn_id_swaps or self.id_warning_shown:
+            return True
+        self.id_warning_shown = True
+        return messagebox.askyesno(
+            "Asset-ID swap",
+            "An asset-ID swap makes Roblox ask its servers for a different asset, which Roblox can see. "
+            "Link and file swaps only change things on your PC, so they're the lower-profile choice.\n\n"
+            "Save this ID swap anyway? (You can turn this reminder off in Settings.)",
+            parent=self.root,
+        )
+
     def _add_new(self) -> None:
-        if swap := self._form_swap():
+        if (swap := self._form_swap()) and self._id_swap_ok(swap):
             self.store.checkpoint()
             self._swaps().append(swap)
             self._clear_form()
@@ -487,7 +520,7 @@ class App:
             messagebox.showinfo("Patchwork", "Select the one swap to update.", parent=self.root)
             return
         old = self._swaps()[sel[0]]
-        if swap := self._form_swap(old.enabled):
+        if (swap := self._form_swap(old.enabled)) and self._id_swap_ok(swap):
             self.store.checkpoint()
             self._swaps()[sel[0]] = swap
             self._changed(self.store.editing)
@@ -543,7 +576,7 @@ class App:
             self.ca_pem = ensure_ca(self.home)
         report = roblox.patch_all(self.ca_pem)
         for label in report.patched:
-            self._log(f"Trusted Patchwork's certificate in {label}.")
+            self._log(f"Set up {label} to trust Patchwork.")
         for label, reason in report.failed:
             if not quiet:
                 self._log(f"Couldn't update {label}: {reason}", "warn")
@@ -561,6 +594,11 @@ class App:
             return
         self.runner.update_config(self.store.to_config())
         running = roblox.running_clients(tuple(self.store.processes))
+        if not running:
+            # Roblox reuses assets it saved earlier, so start from a clean cache.
+            removed, _ = roblox.clear_cache()
+            if removed:
+                self._log("Cleared Roblox's asset cache so swaps load fresh.")
         self.busy = True
         self.start_btn.state(["disabled"])
         self._set_status("Starting… accept the Windows prompt if one appears", "busy")
@@ -585,6 +623,42 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _restore_roblox(self) -> None:
+        """Undo Patchwork's changes to Roblox and drop swapped assets from its cache."""
+        report = roblox.unpatch_all()
+        for label, reason in report.failed:
+            self._log(f"Couldn't restore {label}: {reason}", "warn")
+        if report.patched:
+            self._log(f"Removed Patchwork's certificate and setting from {len(report.patched)} Roblox folder(s).")
+        running = roblox.running_clients()
+        if running:
+            self._log("Roblox is still open, so its cache wasn't cleared. Close Roblox and press Clear Cache "
+                      "to drop the swapped assets it saved.", "warn")
+        else:
+            roblox.clear_cache()
+            self._log("Cleared Roblox's asset cache. Roblox is back to normal.")
+
+    def _allow_swaps(self, header_place: int | None) -> bool:
+        """Called by the proxy for each asset request: swap only inside RIVALS."""
+        if header_place == games.RIVALS_PLACE_ID:
+            return True
+        return self.watcher.state.in_rivals
+
+    def _game_status(self) -> None:
+        state = self.watcher.state
+        learned = sorted(state.rivals_universes)
+        if learned != sorted(self.store.rivals_universes):
+            self.store.rivals_universes = learned
+            self.store.save_settings()
+        if not self.runner.running:
+            return
+        if state.in_rivals:
+            self._set_status(f"Running · in {games.RIVALS_NAME}: swaps on", "on")
+        elif state.in_game:
+            self._set_status(f"Running · not {games.RIVALS_NAME}: swaps paused", "busy")
+        else:
+            self._set_status(f"Running · waiting for {games.RIVALS_NAME}", "on")
+
     def _repatch(self) -> None:
         # Roblox installs updates into a new folder, so keep trusting new versions.
         if self.runner.running:
@@ -608,8 +682,8 @@ class App:
                     self.busy = False
                     self.start_btn.state(["!disabled"])
                     self.start_btn.configure(text="Stop")
-                    self._set_status("Running: swapping Roblox assets", "on")
-                    self._log("Patchwork is running.")
+                    self._log(f"Patchwork is running. Swaps apply once you join {games.RIVALS_NAME}.")
+                    self._game_status()
                     if data:
                         self._log("Roblox was already open. Close it and open it again so it uses Patchwork.",
                                   "warn")
@@ -625,22 +699,48 @@ class App:
                     self.start_btn.state(["!disabled"])
                     self.start_btn.configure(text="Start")
                     self._set_status("Stopped", "idle")
-                    self._log("Patchwork stopped. Roblox now loads its normal assets "
-                              "(Clear Cache to drop swapped ones it saved).")
+                    self._log("Patchwork stopped.")
+                    if self.store.restore_on_stop:
+                        self._restore_roblox()
+                    else:
+                        self._log("Roblox now loads its normal assets (Clear Cache to drop swapped ones it saved).")
+                elif kind == "game":
+                    before = getattr(self, "_last_game", None)
+                    now = (self.watcher.state.in_game, self.watcher.state.in_rivals)
+                    self._last_game = now
+                    if now != before:
+                        self._log(f"Roblox: {self.watcher.state.describe()}"
+                                  + (" (swaps on)" if now[1] and self.runner.running else
+                                     " (swaps paused)" if now[0] and self.runner.running else ""))
+                    self._game_status()
         except queue.Empty:
             pass
         self.root.after(POLL_MS, self._poll)
 
     # ----- maintenance --------------------------------------------------------------
 
-    def _studio_changed(self) -> None:
-        procs = [p for p in self.store.processes if p != "RobloxStudioBeta.exe"]
-        if self.studio_var.get():
-            procs.append("RobloxStudioBeta.exe")
-        self.store.processes = procs or ["RobloxPlayerBeta.exe"]
+    def _safety_changed(self) -> None:
+        self.store.restore_on_stop = self.restore_var.get()
+        self.store.warn_id_swaps = self.warn_id_var.get()
         self.store.save_settings()
-        if self.runner.running:
-            self._log("Studio setting saved. Stop and Start Patchwork to apply it.")
+
+    def _first_run_notice(self) -> None:
+        text = (
+            f"Patchwork changes how {games.RIVALS_NAME} looks and sounds on your PC only.\n\n"
+            "Before you use it:\n\n"
+            "•  Roblox's rules don't allow third-party tools that change the game, so any asset swapper "
+            "carries some risk of a ban. Patchwork keeps that risk low (it never touches the game's memory "
+            "or your account), but nothing can make it zero.\n\n"
+            f"•  Keep swaps cosmetic. Swaps that give you an advantage, like see-through walls or easier-to-"
+            f"spot enemies, are what {games.RIVALS_NAME} bans players for.\n\n"
+            "•  Try it on an alt account first.\n\n"
+            "Use Patchwork at your own risk. Continue?"
+        )
+        if messagebox.askyesno("Before you start", text, icon="warning", parent=self.root):
+            self.store.notice_accepted = True
+            self.store.save_settings()
+        else:
+            self._on_close()
 
     def _clear_cache(self) -> None:
         running = roblox.running_clients()
@@ -679,7 +779,7 @@ class App:
             self.events.put(("stopped", None))
         report = roblox.unpatch_all()
         for label in report.patched:
-            self._log(f"Removed the certificate from {label}.")
+            self._log(f"Removed Patchwork's certificate and setting from {label}.")
         for label, reason in report.failed:
             self._log(f"Couldn't update {label}: {reason}", "warn")
         shutil.rmtree(ca_dir(self.home), ignore_errors=True)
@@ -689,6 +789,12 @@ class App:
     def _on_close(self) -> None:
         if self.runner.running:
             self.runner.stop()
+            if self.store.restore_on_stop:
+                try:
+                    self._restore_roblox()
+                except Exception:
+                    pass
+        self.watcher.stop()
         self.root.destroy()
 
 
@@ -716,6 +822,7 @@ def _style(root: tk.Tk) -> None:
     style.configure("TLabel", background=p["bg"], foreground=p["text"])
     style.configure("Panel.TLabel", background=p["panel"])
     style.configure("Title.TLabel", font=(family, 17, "bold"))
+    style.configure("Subtitle.TLabel", foreground=p["accent"], font=(family, 10, "bold"))
     style.configure("Section.TLabel", foreground=p["muted"], font=(family, 9, "bold"))
     style.configure("Status.TLabel", font=base)
     style.configure("Hint.TLabel", foreground=p["muted"], font=(family, 9))

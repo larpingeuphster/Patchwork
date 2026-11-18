@@ -59,8 +59,12 @@ class SwapAddon:
         config: Config,
         on_hit: Callable[[rules.Hit], None] | None = None,
         downloads_dir: Path | None = None,
+        allow: Callable[[int | None], bool] | None = None,
     ):
         self.on_hit = on_hit or (lambda hit: None)
+        # Decides whether swaps apply right now. Gets the place ID from the
+        # request's Roblox-Place-Id header when Roblox sends one, else None.
+        self.allow = allow
         self.downloads = Downloads(downloads_dir or Path(tempfile.gettempdir()) / "patchwork-downloads")
         self.set_config(config)
 
@@ -125,6 +129,11 @@ class SwapAddon:
 
         if len(self.table) == 0:
             return
+
+        if self.allow is not None:
+            header = req.headers.get("Roblox-Place-Id", "")
+            if not self.allow(int(header) if header.isdigit() else None):
+                return
 
         if req.method == "POST" and rules.is_batch_path(path):
             try:
@@ -212,11 +221,12 @@ class ProxyRunner:
         on_hit: Callable[[rules.Hit], None],
         on_log: Callable[[str, str], None],
         mode: str | None = None,
+        allow: Callable[[int | None], bool] | None = None,
     ):
         self.app_dir = app_dir
         self.config = config
         self.mode = mode  # tests use a regular proxy; the app uses local redirect mode
-        self.addon = SwapAddon(config, on_hit, downloads_dir(app_dir))
+        self.addon = SwapAddon(config, on_hit, downloads_dir(app_dir), allow)
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="patchwork-proxy", daemon=True)
         self._thread.start()

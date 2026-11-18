@@ -9,6 +9,7 @@ idempotent and safe to repeat.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -21,6 +22,12 @@ END_MARKER = "# <<< Patchwork CA <<<"
 
 CLIENT_EXES = ("RobloxPlayerBeta.exe", "RobloxStudioBeta.exe")
 
+# Roblox can use a certificate list built into the client instead of
+# ssl/cacert.pem. This setting makes it read cacert.pem (Fleasion sets the same
+# one). It is written in the string form launchers such as Bloxstrap use.
+CLIENT_FLAGS = {"DFFlagHttpUseEmbeddedCaCerts": "False"}
+CREATED_SUFFIX = ".patchwork-created"
+
 
 @dataclass(frozen=True)
 class Install:
@@ -29,6 +36,10 @@ class Install:
     @property
     def cacert(self) -> Path:
         return self.version_dir / "ssl" / "cacert.pem"
+
+    @property
+    def client_settings(self) -> Path:
+        return self.version_dir / "ClientSettings" / "ClientAppSettings.json"
 
     @property
     def label(self) -> str:
@@ -129,6 +140,88 @@ def unpatch_cacert(path: Path) -> bool:
     return True
 
 
+def _created_marker(path: Path) -> Path:
+    return path.with_name(path.name + CREATED_SUFFIX)
+
+
+def patch_client_settings(path: Path, flags: dict[str, str] = CLIENT_FLAGS) -> bool:
+    """Add ``flags`` to a ClientAppSettings.json, keeping everything else in it."""
+    data: dict = {}
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} isn't a settings object")
+    if all(data.get(k) == v for k, v in flags.items()):
+        return False
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _created_marker(path).write_text("Patchwork created this settings file\n", encoding="utf-8")
+    data.update(flags)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return True
+
+
+def unpatch_client_settings(path: Path, flags: dict[str, str] = CLIENT_FLAGS) -> bool:
+    marker = _created_marker(path)
+    if not path.exists():
+        marker.unlink(missing_ok=True)
+        return False
+    data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+    if not isinstance(data, dict):
+        return False
+    removed = [k for k, v in flags.items() if data.get(k) == v]
+    for key in removed:
+        del data[key]
+    if marker.exists() and not data:
+        path.unlink()
+        marker.unlink()
+        return True
+    marker.unlink(missing_ok=True)
+    if removed:
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return bool(removed)
+
+
+def modifications_dirs(roots: list[Path] | None = None) -> list[Path]:
+    """Launcher override folders (Bloxstrap, Fishstrap, ...) that sit next to their Versions folder.
+
+    These launchers copy files from Modifications over Roblox on every launch,
+    so Patchwork's changes must be there too or the launcher would undo them.
+    """
+    found = []
+    for root in roots if roots is not None else version_roots():
+        mods = root.parent / "Modifications"
+        if mods.is_dir():
+            found.append(mods)
+    return found
+
+
+def patch_modifications(mods: Path, ca_pem: str, base_cacert: Path | None) -> bool:
+    changed = patch_client_settings(mods / "ClientSettings" / "ClientAppSettings.json")
+    cacert = mods / "ssl" / "cacert.pem"
+    if not cacert.exists():
+        if base_cacert is None or not base_cacert.exists():
+            return changed
+        cacert.parent.mkdir(parents=True, exist_ok=True)
+        text = _strip_block(base_cacert.read_text(encoding="utf-8", errors="surrogateescape"))
+        cacert.write_text(text, encoding="utf-8", errors="surrogateescape")
+        _created_marker(cacert).write_text("Patchwork created this file\n", encoding="utf-8")
+    return patch_cacert(cacert, ca_pem) or changed
+
+
+def unpatch_modifications(mods: Path) -> bool:
+    changed = unpatch_client_settings(mods / "ClientSettings" / "ClientAppSettings.json")
+    cacert = mods / "ssl" / "cacert.pem"
+    marker = _created_marker(cacert)
+    if marker.exists():
+        cacert.unlink(missing_ok=True)
+        marker.unlink()
+        return True
+    if cacert.exists():
+        changed = unpatch_cacert(cacert) or changed
+    return changed
+
+
 @dataclass
 class PatchReport:
     patched: list[str]
@@ -140,32 +233,54 @@ class PatchReport:
         return len(self.patched) + len(self.already)
 
 
-def patch_all(ca_pem: str, installs: list[Install] | None = None) -> PatchReport:
+def patch_all(
+    ca_pem: str, installs: list[Install] | None = None, mods: list[Path] | None = None
+) -> PatchReport:
+    """Trust ``ca_pem`` and set the client setting in every install and launcher override folder."""
     report = PatchReport([], [], [])
-    for install in installs if installs is not None else find_installs():
+    installs = installs if installs is not None else find_installs()
+    for install in installs:
         if not install.cacert.exists():
             report.failed.append((install.label, "no ssl/cacert.pem in this version"))
             continue
         try:
             changed = patch_cacert(install.cacert, ca_pem)
-        except OSError as exc:
+            changed = patch_client_settings(install.client_settings) or changed
+        except (OSError, ValueError) as exc:
             report.failed.append((install.label, str(exc)))
             continue
         (report.patched if changed else report.already).append(install.label)
+    base = next((i.cacert for i in installs if i.cacert.exists()), None)
+    for folder in mods if mods is not None else modifications_dirs():
+        label = f"{folder.parent.name}/Modifications"
+        try:
+            changed = patch_modifications(folder, ca_pem, base)
+        except (OSError, ValueError) as exc:
+            report.failed.append((label, str(exc)))
+            continue
+        (report.patched if changed else report.already).append(label)
     return report
 
 
-def unpatch_all(installs: list[Install] | None = None) -> PatchReport:
+def unpatch_all(installs: list[Install] | None = None, mods: list[Path] | None = None) -> PatchReport:
+    """Undo everything patch_all did."""
     report = PatchReport([], [], [])
     for install in installs if installs is not None else find_installs():
-        if not install.cacert.exists():
-            continue
         try:
-            changed = unpatch_cacert(install.cacert)
-        except OSError as exc:
+            changed = install.cacert.exists() and unpatch_cacert(install.cacert)
+            changed = unpatch_client_settings(install.client_settings) or changed
+        except (OSError, ValueError) as exc:
             report.failed.append((install.label, str(exc)))
             continue
         (report.patched if changed else report.already).append(install.label)
+    for folder in mods if mods is not None else modifications_dirs():
+        label = f"{folder.parent.name}/Modifications"
+        try:
+            changed = unpatch_modifications(folder)
+        except (OSError, ValueError) as exc:
+            report.failed.append((label, str(exc)))
+            continue
+        (report.patched if changed else report.already).append(label)
     return report
 
 
