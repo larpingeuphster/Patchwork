@@ -448,8 +448,8 @@ class Controller:
         """Every so often, say what Patchwork has seen from Roblox, and flag likely problems."""
         st = self.runner.addon.stats
         now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused, st.upstream_failed,
-               st.downloads)
-        if now != self._last_summary and (st.lookups or st.rejected or st.upstream_failed):
+               st.downloads, st.silent_closes)
+        if now != self._last_summary and (st.lookups or st.rejected or st.upstream_failed or st.silent_closes):
             self._last_summary = now
             parts = [f"{st.assets} asset(s) asked for in {st.lookups} request(s)", f"{st.swapped} swapped",
                      f"{st.downloads} download(s) from Roblox's CDN"]
@@ -459,10 +459,14 @@ class Controller:
                 parts.append(f"{st.rejected} certificate refusal(s)")
             if st.upstream_failed:
                 parts.append(f"{st.upstream_failed} failed connection(s) to Roblox's server")
+            if st.silent_closes:
+                parts.append(f"{st.silent_closes} connection(s) Roblox closed without a request")
+            if st.protocols:
+                parts.append("protocol " + "/".join(sorted(st.protocols)))
             self.log("Seen from Roblox so far: " + ", ".join(parts) + ".", "stats")
         quiet_for = time.monotonic() - getattr(self, "_started_at", time.monotonic())
         if (not self._warned_quiet and quiet_for > 90 and self.watcher.state.in_rivals
-                and st.lookups == 0 and st.rejected == 0):
+                and st.lookups == 0 and st.rejected == 0 and st.silent_closes == 0):
             self._warned_quiet = True
             self.log(f"You're in {games.RIVALS_NAME} but Patchwork hasn't seen any of Roblox's asset requests yet. "
                      "Roblox probably isn't going through Patchwork: close Roblox completely (check Task Manager "

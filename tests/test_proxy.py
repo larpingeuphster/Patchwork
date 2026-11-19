@@ -224,3 +224,22 @@ def test_cdn_downloads_pass_through_and_are_counted(tmp_path):
         asyncio.run(addon.request(f))
         assert f.response is None
     assert addon.stats.downloads == 1 and addon.stats.lookups == 1
+
+
+def test_counts_connections_closed_without_a_request(tmp_path):
+    from types import SimpleNamespace
+    addon = SwapAddon(Config(), downloads_dir=tmp_path)
+    silent = SimpleNamespace(id="c1", alpn=b"h2")
+    busy = SimpleNamespace(id="c2", alpn=None)
+    with taddons.context(addon):
+        for client in (silent, busy):
+            addon.tls_established_client(SimpleNamespace(conn=SimpleNamespace(sni="assetdelivery.roblox.com"),
+                                                         context=SimpleNamespace(client=client)))
+        f = flow("GET", "/v1/asset/?id=1")
+        f.client_conn.id = "c2"
+        addon.requestheaders(f)
+        addon.client_disconnected(silent)
+        addon.client_disconnected(busy)
+        addon.client_disconnected(SimpleNamespace(id="unknown"))
+    assert addon.stats.silent_closes == 1
+    assert addon.stats.protocols == {"h2", "http/1.1"}

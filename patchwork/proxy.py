@@ -100,6 +100,8 @@ class SwapStats:
         self.paused = 0  # requests seen while not in RIVALS
         self.upstream_failed = 0  # Patchwork couldn't verify Roblox's real server
         self.downloads = 0  # asset content Roblox downloaded from its CDN hosts
+        self.silent_closes = 0  # Roblox accepted the certificate, then hung up without a request
+        self.protocols: set[str] = set()  # ALPN protocols Roblox negotiated with Patchwork
         self._last_upstream_log = 0.0
         self.unknown_paths: set[str] = set()
         self._last_reject_log = 0.0
@@ -129,6 +131,8 @@ class SwapAddon:
         self.allow = allow
         self.downloads = Downloads(downloads_dir or Path(tempfile.gettempdir()) / "patchwork-downloads")
         self.stats = SwapStats()
+        # Open, decrypted Roblox connections: client id -> [host, protocol, requests, opened_at]
+        self._conns: dict[str, list] = {}
         self.set_config(config)
 
     def set_config(self, config: Config) -> None:
@@ -139,10 +143,39 @@ class SwapAddon:
     # --- TLS: tells us whether Roblox trusts Patchwork's certificate ---------------
 
     def tls_established_client(self, data) -> None:
-        if _sni(data) in self.hosts:
-            self.stats.trusted += 1
-            if self.stats.trusted == 1:
-                log.info("Roblox accepted Patchwork's certificate for %s. Swaps can apply.", _sni(data))
+        host = _sni(data)
+        if host not in self.hosts:
+            return
+        self.stats.trusted += 1
+        client = getattr(getattr(data, "context", None), "client", None)
+        alpn = getattr(client, "alpn", None) or getattr(getattr(data, "conn", None), "alpn", None)
+        protocol = alpn.decode(errors="replace") if isinstance(alpn, bytes) else "http/1.1"
+        self.stats.protocols.add(protocol)
+        if client is not None:
+            self._conns[client.id] = [host, protocol, 0, time.monotonic()]
+        if self.stats.trusted == 1:
+            log.info("Roblox accepted Patchwork's certificate for %s (protocol %s). Swaps can apply.", host, protocol)
+
+    def requestheaders(self, flow) -> None:
+        conn = self._conns.get(flow.client_conn.id)
+        if conn is not None:
+            conn[2] += 1
+
+    def client_disconnected(self, client) -> None:
+        conn = self._conns.pop(getattr(client, "id", None), None)
+        if conn is None or conn[2] > 0:
+            return
+        host, protocol, _requests, opened = conn
+        self.stats.silent_closes += 1
+        n = self.stats.silent_closes
+        if n <= 3:
+            log.warning("Roblox closed a connection to %s after accepting Patchwork's certificate, without asking "
+                        "for anything (protocol %s, open %.1fs).", host, protocol, time.monotonic() - opened)
+        if n == 3:
+            log.warning("Roblox keeps hanging up on Patchwork right after the secure connection is set up. That's "
+                        "what certificate pinning looks like: Roblox checks it's talking to its own server and "
+                        "refuses anything else. If so, Roblox has blocked this kind of tool (Fleasion reports the "
+                        "same), and Patchwork can't swap assets.")
 
     def tls_failed_server(self, data) -> None:
         host = _sni(data) or str(getattr(getattr(getattr(data, "context", None), "server", None), "sni", "") or "")

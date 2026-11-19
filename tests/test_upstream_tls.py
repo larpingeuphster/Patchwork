@@ -128,3 +128,30 @@ def test_upstream_trust_includes_windows_store(tmp_path):
     if sys.platform == "win32":
         # Windows always has trusted roots, so the list must be longer than certifi's.
         assert text.count("BEGIN CERTIFICATE") > certifi_count + 1
+
+
+def test_hangup_after_handshake_is_detected(tmp_path, fake_av_server):
+    """What certificate pinning looks like from Patchwork's side: TLS succeeds, then the client hangs up."""
+    import time
+
+    up_port, av_ca_pem, seen = fake_av_server
+    home = tmp_path / "home"
+    proxy_port = _free_port()
+    runner = ProxyRunner(Config(intercept_hosts=["localhost"]), home, lambda h: None, lambda *a: None,
+                         mode=f"regular@{proxy_port}", extra_upstream_pems=(av_ca_pem,))
+    runner.start(timeout=30)
+    try:
+        ctx = ssl.create_default_context(cafile=str(ca_dir(home) / "mitmproxy-ca-cert.pem"))
+        conn = http.client.HTTPSConnection("127.0.0.1", proxy_port, timeout=10, context=ctx)
+        conn.set_tunnel("localhost", up_port)
+        conn.connect()  # TLS through Patchwork succeeds...
+        conn.close()  # ...then hang up without a request
+        assert _batch_through_proxy(proxy_port, up_port, home) == 200  # a normal connection, for contrast
+        for _ in range(50):
+            if runner.addon.stats.silent_closes >= 1:
+                break
+            time.sleep(0.1)
+        assert runner.addon.stats.trusted >= 2
+        assert runner.addon.stats.silent_closes == 1
+    finally:
+        runner.stop()
