@@ -192,3 +192,20 @@ def test_launch_at_login_setting(ctl, monkeypatch):
     ctl.set_setting("launch_at_login", False)
     ctl.set_setting("launch_at_login", True)
     assert calls == ["off", "on"] and ctl.snapshot()["settings"]["launch_at_login"] is True
+
+
+def test_clear_cache_lets_go_of_the_cache_first(tmp_path, monkeypatch):
+    from patchwork import cache, roblox
+    from tests.test_cache import PNG_HEADERS, make_store, png
+    store = make_store(tmp_path, [(b"\x01" * 16, cache.wrap("u", PNG_HEADERS, png()), 10)])
+    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=store.directory)
+    seen_open = []
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: [])
+    monkeypatch.setattr(roblox, "clear_cache", lambda *a, **k: (seen_open.append(ctl.runner.swapper._conn), ([], []))[1])
+    try:
+        ctl.runner.swapper.tick(force=True)
+        assert ctl.runner.swapper._conn is not None  # watching keeps the index open...
+        ctl.clear_cache()
+        assert seen_open == [None]  # ...but not while clearing
+    finally:
+        ctl.shutdown()

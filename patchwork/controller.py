@@ -486,7 +486,10 @@ class Controller:
         if running:
             roblox.close_clients()
             self.log("Closed Roblox to clear its cache.")
-        removed, failed = roblox.clear_cache()
+        # Patchwork keeps the cache index open while it watches it; let go while clearing.
+        with self.runner.swapper._lock:
+            self.runner.swapper.close()
+            removed, failed = roblox.clear_cache()
         if failed:
             holders = roblox.lockers([Path(p) for p, _ in failed])
             who = ", ".join(f"{name} (PID {pid})" for pid, name in holders) or "another program"

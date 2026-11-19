@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import logging
 import threading
 import time
@@ -39,6 +40,32 @@ MAX_ASSET = 50 * 1024 * 1024
 RETRY_REFUSED_AFTER = 6 * 60 * 60  # Roblox said no (sign-in needed, missing asset)
 RETRY_NETWORK_AFTER = 2 * 60  # couldn't reach Roblox: try again soon
 IMAGE_KINDS = {"png", "jpeg", "gif", "webp"}
+_ID_IN_URL = re.compile(r"(?:[?&]id=|/assetid/|/asset-id/)(\d+)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class EntryInfo:
+    body_len: int
+    kind: str
+    url: str = ""
+    status: int = 0
+    location: str = ""  # where a cached redirect points
+
+
+def asset_id_in(url: str) -> int | None:
+    """The asset ID an asset-delivery URL asks for, if it names one."""
+    if "assetdelivery" not in url.lower() and "/asset" not in url.lower():
+        return None
+    match = _ID_IN_URL.search(url)
+    return int(match.group(1)) if match else None
+
+
+def _location(headers: str) -> str:
+    for line in headers.splitlines():
+        name, _, value = line.partition(":")
+        if name.strip().lower() == "location":
+            return value.strip()
+    return ""
 
 
 class Unavailable(Exception):
@@ -58,8 +85,8 @@ def fetch_asset(asset_id: int, timeout: float = 15) -> bytes:
             body = resp.read(MAX_ASSET + 1)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
-            raise Unavailable("Roblox only lets signed-in players download this asset (most sounds are like "
-                              "this), so Patchwork can't find it in the cache") from exc
+            raise Unavailable("Roblox only hands this asset out to signed-in players in the game (RIVALS' own "
+                              "sounds, meshes and animations are like this)") from exc
         if exc.code == 404:
             raise Unavailable("Roblox says this asset doesn't exist") from exc
         raise Unavailable(f"Roblox answered {exc.code}", transient=exc.code >= 500 or exc.code == 429) from exc
@@ -213,6 +240,8 @@ class CacheSwapper:
         self._conn = None  # kept open: SQLite's data_version only compares within one connection
         self._replacements: dict[tuple[str, str], bytes] = {}
         self._reported: set[str] = set()
+        self._last_unavailable: tuple = ()
+        self._described = False
         self.stats = {"swapped": 0, "waiting": 0, "unavailable": 0}
         self.state: dict[int, str] = {}  # asset id -> "swapped" / "waiting" / reason
 
@@ -271,35 +300,56 @@ class CacheSwapper:
         self._replacements[key] = data
         return data
 
-    def _wanted(self) -> dict[tuple[int, str], tuple[int, Swap]]:
-        """(size, md5) of each target's original -> (asset id, swap). Earlier swaps win."""
+    def _wanted(self, linked: set[int]) -> dict[tuple[int, str], tuple[int, Swap]]:
+        """(size, md5) of each target's original -> (asset id, swap). Earlier swaps win.
+
+        Targets in ``linked`` were found through the cache's own records and need no download.
+        """
         wanted: dict[tuple[int, str], tuple[int, Swap]] = {}
-        waiting = unavailable = 0
+        unavailable: list[tuple[int, str, str]] = []
         for swap in self.swaps:
             for asset_id in swap.targets:
+                if asset_id in linked:
+                    continue
                 fp = self.idmap.get(asset_id)
                 if isinstance(fp, str):
-                    unavailable += 1
+                    unavailable.append((asset_id, swap.name, fp))
                     self.state[asset_id] = fp
-                    self._note(f"unavail:{asset_id}", f"Can't swap {asset_id} ({swap.name}): {fp}.")
                     continue
                 wanted.setdefault((fp.size, fp.md5), (asset_id, swap))
                 if self.state.get(asset_id) != "swapped":
                     self.state[asset_id] = "waiting"
-                    waiting += 1
-        self.stats.update(unavailable=unavailable)
+        self.stats.update(unavailable=len(unavailable))
+        self._report_unavailable(unavailable)
         return wanted
 
-    def _info(self, conn, entry: cache.Entry) -> tuple[int, str]:
-        # Body length and type don't change while the stored size stays the same, so this
-        # isn't re-read every time Roblox touches the entry (which updates its access time).
+    def _report_unavailable(self, unavailable: list[tuple[int, str, str]]) -> None:
+        """One message for every asset that can't be identified, grouped by reason, only when it changes."""
+        key = tuple(sorted((a, r) for a, _, r in unavailable))
+        if key == self._last_unavailable:
+            return
+        self._last_unavailable = key
+        by_reason: dict[str, list[str]] = {}
+        for asset_id, name, reason in unavailable:
+            by_reason.setdefault(reason, []).append(f"{name} ({asset_id})")
+        for reason, names in by_reason.items():
+            shown = ", ".join(names[:8]) + (f" and {len(names) - 8} more" if len(names) > 8 else "")
+            log.warning("%d asset(s) can't be identified in Roblox's cache yet: %s. Affected: %s.",
+                        len(names), reason, shown)
+
+    def _info(self, conn, entry: cache.Entry) -> EntryInfo:
+        # These don't change while the stored size stays the same, so an entry isn't re-read
+        # every time Roblox touches it (which updates its access time).
         key = (entry.id, entry.size, 0)
         if key not in self._body_info:
             head = self.store.read_head(conn, entry)
             header = cache.parse_header(head)
-            body_head = head[header.body_offset:] if header else head
-            body_len = header.body_len if header else entry.size
-            self._body_info[key] = (body_len, cache.sniff(body_head))
+            if header:
+                info = EntryInfo(header.body_len, cache.sniff(head[header.body_offset:]), header.url,
+                                 header.status, _location(header.headers))
+            else:
+                info = EntryInfo(entry.size, cache.sniff(head))
+            self._body_info[key] = info
         return self._body_info[key]
 
     def _forget(self, entry_id: bytes) -> None:
@@ -349,10 +399,57 @@ class CacheSwapper:
                     pass
                 self._conn = None
 
+    def _links(self, conn, entries: list[cache.Entry]) -> dict[int, cache.Entry]:
+        """Asset ID -> cache entry, from the cache's own records (no download needed).
+
+        Roblox may cache its asset-delivery answers, whose URL names the asset ID: either
+        the asset itself, or a redirect to the CDN address of the entry that holds it.
+        """
+        by_url: dict[str, cache.Entry] = {}
+        infos = {}
+        for entry in entries:
+            info = self._info(conn, entry)
+            infos[entry.hex] = info
+            if info.url:
+                by_url.setdefault(info.url, entry)
+        links: dict[int, cache.Entry] = {}
+        for entry in entries:
+            info = infos[entry.hex]
+            asset_id = asset_id_in(info.url) if info.url else None
+            if asset_id is None:
+                continue
+            if info.location:
+                target = by_url.get(info.location)
+                if target is not None:
+                    links.setdefault(asset_id, target)
+            elif 200 <= info.status < 300 and info.kind not in ("other", "empty"):
+                links.setdefault(asset_id, entry)
+        if not self._described:
+            self._described = True
+            self._describe(entries, infos, links)
+        return links
+
+    def _describe(self, entries, infos, links) -> None:
+        kinds: dict[str, int] = {}
+        for entry in entries:
+            kind = infos[entry.hex].kind
+            kinds[kind] = kinds.get(kind, 0) + 1
+        named = sum(1 for e in entries if infos[e.hex].url and asset_id_in(infos[e.hex].url) is not None)
+        summary = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])[:8])
+        log.info("Roblox's cache has %d entries (%s). %d name an asset ID, linking %d asset(s) to their files.",
+                 len(entries), summary or "none", named, len(links))
+
     def _apply(self, conn) -> None:
-        wanted = self._wanted()
-        sizes = {size for size, _ in wanted}
         entries = self.store.entries(conn)
+        links = self._links(conn, entries)
+        linked: dict[str, tuple[int, Swap]] = {}
+        for swap in self.swaps:
+            for asset_id in swap.targets:
+                entry = links.get(asset_id)
+                if entry is not None:
+                    linked.setdefault(entry.hex, (asset_id, swap))
+        wanted = self._wanted({aid for aid, _ in linked.values()})
+        sizes = {size for size, _ in wanted}
         present = {e.hex: e for e in entries}
         active_keys = {swap_key(s) for s in self.swaps}
 
@@ -360,7 +457,7 @@ class CacheSwapper:
         for entry_hex, rec in list(self.backups.manifest.items()):
             entry = present.get(entry_hex)
             target_still_wanted = any(rec.get("asset_id") == aid and swap_key(s) == rec.get("swap")
-                                      for aid, s in wanted.values())
+                                      for aid, s in list(wanted.values()) + list(linked.values()))
             if target_still_wanted and rec.get("swap") in active_keys:
                 continue
             if entry is not None and self._entry_md5(conn, entry) == rec.get("written_md5"):
@@ -377,18 +474,19 @@ class CacheSwapper:
         # Swap entries that hold a wanted original.
         swapped = 0
         for entry in entries:
-            body_len, kind = self._info(conn, entry)
-            if body_len not in sizes and entry.hex not in self.backups.manifest:
+            body_len = self._info(conn, entry).body_len
+            rec = self.backups.manifest.get(entry.hex)
+            if body_len not in sizes and rec is None and entry.hex not in linked:
                 continue
             digest = self._entry_md5(conn, entry)
             if digest is None:
                 continue
-            match = wanted.get((body_len, digest))
+            if rec and digest == rec.get("written_md5"):
+                swapped += 1  # still holds our replacement
+                self.state[rec.get("asset_id")] = "swapped"
+                continue
+            match = linked.get(entry.hex) or wanted.get((body_len, digest))
             if match is None:
-                rec = self.backups.manifest.get(entry.hex)
-                if rec and digest == rec.get("written_md5"):
-                    swapped += 1  # still holds our replacement
-                    self.state[rec.get("asset_id")] = "swapped"
                 continue
             asset_id, swap = match
             try:

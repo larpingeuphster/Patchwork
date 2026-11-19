@@ -139,3 +139,56 @@ def test_network_failures_retry_sooner_than_refusals(tmp_path, monkeypatch):
     monkeypatch.setattr(swapper.time, "time", lambda: later)
     m.get(1), m.get(2)
     assert calls == [1, 2, 1]  # only the network failure was retried
+
+
+def test_assets_linked_through_cached_redirects_need_no_download(tmp_path):
+    """If Roblox caches its asset-delivery redirects, IDs are found without downloading anything."""
+    calls = []
+
+    def refuse(i):
+        calls.append(i)
+        raise swapper.Unavailable("Roblox only hands this asset out to signed-in players in the game")
+
+    cdn = "https://fts.rbxcdn.com/abcdef0123"
+    e_redirect, e_mesh, e_direct = b"\x0a" * 16, b"\x0b" * 16, b"\x0c" * 16
+    store = make_store(tmp_path, [
+        (e_redirect, cache.wrap("https://assetdelivery.roblox.com/v1/asset/?id=777&serverplaceid=1",
+                                f"location: {cdn}\r\n", b"", status=302), 11),
+        (e_mesh, cache.wrap(cdn, "roblox-assettypeid: 4\r\n", MESH_A), 10),
+        (e_direct, cache.wrap("https://assetdelivery.roblox.com/v1/asset?id=888", PNG_HEADERS, RED), 10),
+    ])
+    ASSETS[999] = MESH_B
+    logs = []
+    sw = swapper.CacheSwapper(store, tmp_path / "app", Downloads(tmp_path / "dl"), logs.append,
+                              idmap=swapper.IdMap(tmp_path / "app" / "idmap.json", fetch=refuse))
+    swapper.fetch_asset = fake_fetch
+    sw.set_swaps([Swap("Skin", [777], KIND_ASSET, "999"), Swap("Gone", [888], KIND_REMOVE, ""),
+                  Swap("Unknown", [123], KIND_ASSET, "999")])
+    sw.tick()
+    assert body(store, e_mesh) == MESH_B  # found via the redirect
+    from PIL import Image
+    assert Image.open(io.BytesIO(body(store, e_direct))).getpixel((0, 0))[3] == 0  # found directly
+    assert calls == [123]  # only the asset with no cache record was looked up
+    assert sw.state[777] == "swapped" and sw.state[888] == "swapped"
+
+
+def test_unidentifiable_assets_are_reported_once_as_a_group(tmp_path, caplog):
+    import logging
+
+    def refuse(i):
+        raise swapper.Unavailable("signed-in only")
+    store = make_store(tmp_path, [])
+    sw = swapper.CacheSwapper(store, tmp_path / "app", Downloads(tmp_path / "dl"), lambda h: None,
+                              idmap=swapper.IdMap(tmp_path / "app" / "idmap.json", fetch=refuse))
+    sw.set_swaps([Swap(f"s{i}", [1000 + i], KIND_ASSET, "5") for i in range(12)])
+    with caplog.at_level(logging.WARNING, logger="patchwork"):
+        sw.tick()
+        sw.tick(force=True)
+    grouped = [r.getMessage() for r in caplog.records if "can't be identified" in r.getMessage()]
+    assert len(grouped) == 1 and grouped[0].startswith("12 asset(s)") and "and 4 more" in grouped[0]
+
+
+def test_asset_id_in_url():
+    assert swapper.asset_id_in("https://assetdelivery.roblox.com/v1/asset/?id=123&x=1") == 123
+    assert swapper.asset_id_in("https://assetdelivery.roblox.com/v2/assetId/456") == 456
+    assert swapper.asset_id_in("https://fts.rbxcdn.com/abc?id=5") is None
