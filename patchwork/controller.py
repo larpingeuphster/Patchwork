@@ -442,14 +442,16 @@ class Controller:
     def _summarise(self) -> None:
         """Every so often, say what Patchwork has seen from Roblox, and flag likely problems."""
         st = self.runner.addon.stats
-        now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused)
-        if now != self._last_summary and (st.lookups or st.rejected):
+        now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused, st.upstream_failed)
+        if now != self._last_summary and (st.lookups or st.rejected or st.upstream_failed):
             self._last_summary = now
             parts = [f"{st.assets} asset(s) asked for in {st.lookups} request(s)", f"{st.swapped} swapped"]
             if st.paused:
                 parts.append(f"{st.paused} request(s) outside {games.RIVALS_NAME}")
             if st.rejected:
                 parts.append(f"{st.rejected} certificate refusal(s)")
+            if st.upstream_failed:
+                parts.append(f"{st.upstream_failed} failed connection(s) to Roblox's server")
             self.log("Seen from Roblox so far: " + ", ".join(parts) + ".", "stats")
         quiet_for = time.monotonic() - getattr(self, "_started_at", time.monotonic())
         if (not self._warned_quiet and quiet_for > 90 and self.watcher.state.in_rivals
@@ -580,10 +582,19 @@ class Controller:
 
     # ----- maintenance --------------------------------------------------------------
 
-    def clear_cache(self) -> None:
+    def clear_cache(self, close_roblox: bool | None = None) -> dict | None:
+        """Delete Roblox's asset cache.
+
+        Windows locks the cache while Roblox is open, so if it's running this
+        returns {"confirm": "roblox_open"} first; call again with
+        close_roblox=True to close Roblox and clear in one go.
+        """
         running = roblox.running_clients()
+        if running and not close_roblox:
+            return {"confirm": "roblox_open", "running": running}
         if running:
-            raise UserError(f"{', '.join(running)} is running. Close Roblox, then clear the cache.")
+            roblox.close_clients()
+            self.log("Closed Roblox to clear its cache.")
         removed, failed = roblox.clear_cache()
         if failed:
             holders = roblox.lockers([Path(p) for p, _ in failed])
@@ -595,6 +606,7 @@ class Controller:
                             "Roblox keeps loading the assets it saved earlier.")
         self.log(f"Cleared Roblox's asset cache ({len(removed)} item(s))." if removed
                  else "Roblox's asset cache was already empty.")
+        return None
 
     def clear_downloads(self) -> None:
         shutil.rmtree(self.home / "downloads", ignore_errors=True)

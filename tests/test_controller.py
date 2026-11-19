@@ -167,3 +167,19 @@ def test_discovers_install_from_running_roblox(ctl, monkeypatch, tmp_path):
     assert exe.parent.parent in roblox.version_roots()
     assert ctl.discover_installs() == []  # remembered
     assert "Froststrap/version-abc" in ctl.snapshot()["installs"]
+
+
+def test_clear_cache_offers_to_close_roblox(ctl, monkeypatch):
+    from patchwork import roblox
+    state = {"running": ["RobloxPlayerBeta.exe"], "closed": 0}
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: list(state["running"]))
+
+    def close(*a, **k):
+        state["closed"] += 1
+        state["running"] = []
+    monkeypatch.setattr(roblox, "close_clients", close)
+    monkeypatch.setattr(roblox, "clear_cache", lambda *a, **k: (["rbx-storage.db"], []))
+    assert ctl.clear_cache() == {"confirm": "roblox_open", "running": ["RobloxPlayerBeta.exe"]}
+    assert state["closed"] == 0
+    assert ctl.clear_cache(close_roblox=True) is None
+    assert state["closed"] == 1

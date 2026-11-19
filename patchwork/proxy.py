@@ -44,6 +44,42 @@ def ensure_ca(app_dir: Path) -> str:
     return (directory / f"{CA_BASENAME}-ca-cert.pem").read_text(encoding="ascii")
 
 
+def upstream_trust(app_dir: Path, extra_pems: tuple[str, ...] = ()) -> Path:
+    """Write the certificates Patchwork trusts when it connects to Roblox's real servers.
+
+    That's mitmproxy's usual list (certifi) plus everything Windows trusts. The
+    Windows part matters when antivirus "HTTPS scanning" or a company network
+    re-signs connections with its own certificate: Windows (and your browser)
+    trusts that certificate, so Patchwork should too, or it can't reach Roblox.
+    Verification itself stays on.
+    """
+    import ssl
+
+    import certifi
+
+    pems: list[str] = [Path(certifi.where()).read_text(encoding="ascii", errors="ignore")]
+    added = 0
+    if hasattr(ssl, "enum_certificates"):  # Windows only
+        seen: set[bytes] = set()
+        for store in ("ROOT", "CA"):
+            try:
+                certs = ssl.enum_certificates(store)
+            except OSError:
+                continue
+            for der, encoding, _trust in certs:
+                if encoding != "x509_asn" or der in seen:
+                    continue
+                seen.add(der)
+                pems.append(ssl.DER_cert_to_PEM_cert(der))
+                added += 1
+    pems.extend(extra_pems)
+    path = ca_dir(app_dir) / "upstream-trust.pem"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(pems), encoding="ascii", errors="ignore")
+    log.debug("Trusting certifi plus %d certificate(s) from Windows for upstream connections", added)
+    return path
+
+
 def downloads_dir(app_dir: Path) -> Path:
     return app_dir / "downloads"
 
@@ -62,6 +98,8 @@ class SwapStats:
         self.assets = 0  # individual assets asked for
         self.swapped = 0
         self.paused = 0  # requests seen while not in RIVALS
+        self.upstream_failed = 0  # Patchwork couldn't verify Roblox's real server
+        self._last_upstream_log = 0.0
         self.unknown_paths: set[str] = set()
         self._last_reject_log = 0.0
 
@@ -104,6 +142,20 @@ class SwapAddon:
             self.stats.trusted += 1
             if self.stats.trusted == 1:
                 log.info("Roblox accepted Patchwork's certificate for %s. Swaps can apply.", _sni(data))
+
+    def tls_failed_server(self, data) -> None:
+        host = _sni(data) or str(getattr(getattr(getattr(data, "context", None), "server", None), "sni", "") or "")
+        if host and host.lower() not in self.hosts:
+            return
+        self.stats.upstream_failed += 1
+        now = time.monotonic()
+        if now - self.stats._last_upstream_log > 30:
+            self.stats._last_upstream_log = now
+            log.warning(
+                "Patchwork couldn't make a trusted connection to Roblox's real asset server (%d time(s)), so "
+                "Roblox's requests can't go through. This usually means antivirus \"HTTPS scanning\" or a "
+                "network filter is in the way: turn off HTTPS/web scanning in your antivirus, or add an "
+                "exception for Patchwork, then press Stop and Start.", self.stats.upstream_failed)
 
     def tls_failed_client(self, data) -> None:
         host = _sni(data)
@@ -290,10 +342,12 @@ class ProxyRunner:
         on_log: Callable[[str, str], None],
         mode: str | None = None,
         allow: Callable[[int | None], bool] | None = None,
+        extra_upstream_pems: tuple[str, ...] = (),
     ):
         self.app_dir = app_dir
         self.config = config
         self.mode = mode  # tests use a regular proxy; the app uses local redirect mode
+        self.extra_upstream_pems = extra_upstream_pems  # tests only
         self.addon = SwapAddon(config, on_hit, downloads_dir(app_dir), allow)
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="patchwork-proxy", daemon=True)
@@ -356,6 +410,7 @@ class ProxyRunner:
         opts = options.Options(
             mode=[self.mode or f"local:{processes}"],
             confdir=str(ca_dir(self.app_dir)),
+            ssl_verify_upstream_trusted_ca=str(upstream_trust(self.app_dir, self.extra_upstream_pems)),
             allow_hosts=[host_pattern(h) for h in self.config.intercept_hosts],
         )
         m = master.Master(opts)

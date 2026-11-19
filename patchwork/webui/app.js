@@ -520,7 +520,18 @@
   }));
 
   // ---------- footer, power, settings ----------
-  $("#clear-cache").addEventListener("click", async () => { if ((await act("clear_cache")) !== undefined) toast("Roblox's cache is clear"); });
+  $("#clear-cache").addEventListener("click", async () => {
+    let r;
+    try { r = await api("clear_cache"); } catch (e) { return alertBox("Couldn't clear the cache", e.message); }
+    if (r && r.confirm === "roblox_open") {
+      const ok = await confirmBox("Close Roblox to clear the cache?",
+        "<p>Windows locks Roblox's cache while Roblox is open, so it can only be cleared with Roblox closed.</p>" +
+        "<p>Patchwork can close Roblox and clear the cache now. Open Roblox again afterwards.</p>", "Close Roblox and clear");
+      if (!ok) return;
+      try { r = await api("clear_cache", { close_roblox: true }); } catch (e) { return alertBox("Couldn't clear the cache", e.message); }
+    }
+    toast("Roblox's cache is clear");
+  });
   $("#open-configs").addEventListener("click", () => act("open_folder", { which: "configs" }));
   $("#undo-btn").addEventListener("click", () => act("undo"));
   $("#power").addEventListener("click", async () => {
