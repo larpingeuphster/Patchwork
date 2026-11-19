@@ -216,7 +216,9 @@ def test_tls_hooks_count_trust_and_refusals(tmp_path):
 
 
 def test_cdn_downloads_pass_through_and_are_counted(tmp_path):
-    addon = SwapAddon(Config(swaps=[Swap("Sky", [100], KIND_ASSET, "900")]), downloads_dir=tmp_path)
+    cfg = Config(swaps=[Swap("Sky", [100], KIND_ASSET, "900")],
+                 intercept_hosts=["assetdelivery.roblox.com", "fts.rbxcdn.com"])
+    addon = SwapAddon(cfg, downloads_dir=tmp_path)
     with taddons.context(addon):
         f = flow("GET", "/abc123def/texture", host="fts.rbxcdn.com")
         asyncio.run(addon.request(f))
