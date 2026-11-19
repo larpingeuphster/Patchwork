@@ -56,6 +56,7 @@ class Controller:
         self._last_summary: tuple | None = None
         self._warned_quiet = False
         self.file_dialog = None  # set by the window: (kind, save, default_name) -> path | None
+        self.tray_available = False  # set by the window when the tray icon is running
 
         roblox.set_extra_roots([Path(r) for r in self.store.install_roots])
         self.watcher = games.GameWatcher(
@@ -165,7 +166,9 @@ class Controller:
                     "restore_on_stop": store.restore_on_stop,
                     "warn_id_swaps": store.warn_id_swaps,
                     "launch_at_login": store.launch_at_login,
+                    "close_to_tray": store.close_to_tray,
                 },
+                "tray_available": self.tray_available,
                 "startup_supported": startup.supported(),
                 "notice_accepted": store.notice_accepted,
                 "paths": {"home": str(self.home), "configs": str(store.configs_dir)},
@@ -630,7 +633,7 @@ class Controller:
         self._changed()
 
     def set_setting(self, key: str, value: bool) -> None:
-        if key not in ("restore_on_stop", "warn_id_swaps", "launch_at_login"):
+        if key not in ("restore_on_stop", "warn_id_swaps", "launch_at_login", "close_to_tray"):
             raise UserError(f"Unknown setting {key}")
         setattr(self.store, key, bool(value))
         self.store.save_settings()

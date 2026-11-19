@@ -13,7 +13,7 @@ a = Analysis(
         (os.path.join(ROOT, "patchwork", "assets"), os.path.join("patchwork", "assets")),
         (os.path.join(ROOT, "patchwork", "webui"), os.path.join("patchwork", "webui")),
     ],
-    hiddenimports=["patchwork.app", "patchwork.selfcheck", "webview.platforms.edgechromium"],
+    hiddenimports=["patchwork.app", "patchwork.selfcheck", "webview.platforms.edgechromium", "pystray._win32"],
     excludes=["mitmproxy.tools.console", "mitmproxy.tools.web", "urwid", "webview.platforms.qt", "webview.platforms.gtk"],
     noarchive=False,
 )

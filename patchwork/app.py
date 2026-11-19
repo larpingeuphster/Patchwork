@@ -15,7 +15,7 @@ import sys
 import threading
 import webbrowser
 
-from . import __version__, games, startup
+from . import __version__, games, startup, tray
 from .config import app_dir
 from .controller import Controller
 from .server import UiServer
@@ -134,21 +134,65 @@ def main(argv: list[str] | None = None) -> None:
         _clear_instance()
         return
 
+    background = startup.BACKGROUND_FLAG in argv
+    use_tray = tray.available()
     window = webview.create_window(
         TITLE, server.url, width=1240, height=820, min_size=(980, 640), background_color="#07070b",
-        text_select=False, minimized=startup.BACKGROUND_FLAG in argv,
+        text_select=False,
+        # Started with Windows: go straight to the tray (or the taskbar if there's no tray).
+        hidden=background and use_tray, minimized=background and not use_tray,
     )
 
     def show() -> None:
         try:
-            window.restore()
             window.show()
+            window.restore()
             window.on_top = True
             window.on_top = False
         except Exception:
             pass
 
     server.on_show = show
+    tray_icon: tray.Tray | None = None
+
+    def quit_app() -> None:
+        closer.quitting = True
+        if tray_icon:
+            tray_icon.stop()
+        window.destroy()
+
+    def clear_cache_from_tray() -> None:
+        try:
+            controller.clear_cache(close_roblox=True)
+            if tray_icon:
+                tray_icon.notify("Roblox's cache is clear. Open Roblox to load your swaps.")
+        except Exception as exc:
+            if tray_icon:
+                tray_icon.notify(f"Couldn't clear Roblox's cache: {exc}")
+
+    def first_hide() -> None:
+        controller.log("Patchwork is still running in the system tray, so swaps keep working. Right-click "
+                       "its tray icon to open it again or quit.")
+        if tray_icon:
+            tray_icon.notify("Patchwork is still running here, so your swaps keep working. "
+                             "Right-click the icon to quit.")
+
+    closer = tray.CloseToTray(
+        hide=window.hide,
+        enabled=lambda: use_tray and controller.store.close_to_tray,
+        on_first_hide=first_hide,
+    )
+    window.events.closing += closer.on_closing
+    if use_tray:
+        try:
+            tray_icon = tray.Tray(TITLE, on_open=show, on_clear_cache=clear_cache_from_tray, on_quit=quit_app)
+            tray_icon.start()
+        except Exception:
+            tray_icon = None
+            use_tray = False
+            if background:
+                window.minimized = True
+    controller.tray_available = use_tray
 
     def native_dialog(kind: str, save: bool, default_name: str) -> str | None:
         types = tuple(f"{label} ({pattern.replace(' ', ';')})" for label, pattern in _dialog_types(kind))
@@ -161,6 +205,7 @@ def main(argv: list[str] | None = None) -> None:
         return result if isinstance(result, str) else result[0]
 
     controller.file_dialog = native_dialog
-    server.on_quit = window.destroy
-    window.events.closed += lambda: (controller.shutdown(), server.stop(), _clear_instance())
+    server.on_quit = quit_app
+    window.events.closed += lambda: (controller.shutdown(), server.stop(), _clear_instance(),
+                                     tray_icon.stop() if tray_icon else None)
     webview.start(private_mode=True)

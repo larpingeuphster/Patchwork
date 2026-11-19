@@ -155,6 +155,7 @@
     pill.title = text;
     pill.querySelector("span").textContent = text;
     $("#login-row").hidden = !S.startup_supported;
+    $("#tray-row").hidden = !S.tray_available;
 
     $("#version").textContent = `Patchwork v${S.version}`;
     $("#active-count").textContent = `${plural(S.active_count, "swap")} on`;

@@ -48,7 +48,7 @@ Patchwork is built to keep the risk low:
 - **Account and network traffic is left alone.** Logins, chat and game servers pass through untouched, and Patchwork never uses your account or sends anything to Roblox on its own.
 - **Risky features are left out:** no custom FastFlags (beyond the one certificate setting above), no account tools and no username spoofing.
 - **Link and file swaps don't change what Roblox asks its servers for.** Asset-ID swaps do, and Roblox could see that, so Patchwork reminds you when you add one. You can turn that reminder off on the **Settings** tab.
-- **Closing Patchwork puts Roblox back to normal.** When you close Patchwork, it removes its certificate and setting and clears the asset cache. Turn this off on the **Settings** tab if you'd rather keep them between sessions.
+- **Quitting Patchwork puts Roblox back to normal.** When you quit Patchwork (from its tray icon), it removes its certificate and setting and clears the asset cache. Turn this off on the **Settings** tab if you'd rather keep them between sessions.
 
 Two things are up to you:
 
@@ -65,9 +65,10 @@ Only swap in files you made or are allowed to use. Patchwork doesn't come with a
 
 ## Use
 
-Patchwork's window has three tabs across the top: **Replacer**, **Activity** and **Settings**. There's no Start button: Patchwork starts swapping as soon as it opens, and stops when you close it. The badge at the top right shows whether you're in RIVALS and swaps are on, paused, or waiting.
+Patchwork's window has three tabs across the top: **Replacer**, **Activity** and **Settings**. There's no Start button: Patchwork starts swapping as soon as it opens, and keeps going until you quit it from its tray icon. The badge at the top right shows whether you're in RIVALS and swaps are on, paused, or waiting.
 
-- **Start with Windows.** Patchwork starts minimised when you sign in to Windows, so swaps work whenever you open Roblox. Turn this off on the **Settings** tab. Opening Patchwork again brings the running window back instead of starting a second copy.
+- **System tray.** Closing the window keeps Patchwork running in the system tray (next to the clock), so swaps keep working. Right-click the tray icon to open Patchwork, clear Roblox's cache, or quit. Quitting puts Roblox back to normal.
+- **Start with Windows.** Patchwork starts in the tray when you sign in to Windows, so swaps work whenever you open Roblox. Turn this off on the **Settings** tab. Opening Patchwork again brings the running window back instead of starting a second copy.
 - **Swaps not showing?** Press **Clear Cache**. It closes Roblox if needed and clears the assets Roblox saved earlier. The next time you open Roblox, it goes through Patchwork.
 
 ### Replacer

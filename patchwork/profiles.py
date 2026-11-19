@@ -56,6 +56,7 @@ class Store:
     rivals_universes: list[int] = field(default_factory=list)  # learned from Roblox's log
     install_roots: list[str] = field(default_factory=list)  # where Roblox was seen running from
     launch_at_login: bool = True  # start Patchwork when the user signs in to Windows
+    close_to_tray: bool = True  # closing the window keeps Patchwork running in the tray
     warnings: list[str] = field(default_factory=list)
     _undo: list[Snapshot] = field(default_factory=list)
 
@@ -97,6 +98,7 @@ class Store:
         store.rivals_universes = [int(u) for u in settings.get("rivals_universes", []) if str(u).isdigit()]
         store.install_roots = [str(r) for r in settings.get("install_roots", []) if isinstance(r, str)]
         store.launch_at_login = bool(settings.get("launch_at_login", True))
+        store.close_to_tray = bool(settings.get("close_to_tray", True))
         if not store.profiles:
             store.profiles[DEFAULT_PROFILE] = []
             store.save_profile(DEFAULT_PROFILE)
@@ -150,6 +152,7 @@ class Store:
             "rivals_universes": self.rivals_universes,
             "install_roots": self.install_roots,
             "launch_at_login": self.launch_at_login,
+            "close_to_tray": self.close_to_tray,
         }
         _atomic_write(self.settings_path, json.dumps(data, indent=2))
 

@@ -81,12 +81,27 @@ def run(report_path: str) -> int:
 
         return f"pywebview {getattr(webview, '__version__', '')}".strip()
 
+    def tray_icon() -> str:
+        if sys.platform != "win32":
+            return "skipped (not Windows)"
+        from . import tray
+
+        if not tray.available():
+            raise RuntimeError("pystray or Pillow missing from the build")
+        from PIL import Image
+
+        Image.open(tray.ICON_PATH).load()
+        import pystray._win32  # noqa: F401
+
+        return "pystray + icon"
+
     check("mitmproxy local mode", local_mode)
     check("Windows redirector", redirector)
     check("certificate authority", certificate)
     check("swap addon", addons)
     check("interface", ui)
     check("native window", window)
+    check("tray icon", tray_icon)
 
     lines.append("PASS" if ok else "FAIL")
     Path(report_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
