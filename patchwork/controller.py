@@ -20,10 +20,10 @@ from pathlib import Path
 from . import __version__, games, presets, roblox, startup
 from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, app_dir, swap_from_inputs
 from .profiles import Store
-from .proxy import ProxyRunner, ca_dir, ensure_ca
 from .rules import Hit
+from .swapper import CacheRunner
 
-REPATCH_SECONDS = 15
+SUMMARY_SECONDS = 15
 MODE_LABELS = {KIND_ASSET: "ID", KIND_URL: "Link", KIND_FILE: "File", KIND_REMOVE: "Remove"}
 
 
@@ -39,7 +39,7 @@ class Event:
 
 
 class Controller:
-    def __init__(self, home: Path | None = None, log_dir: Path | None = None, proxy_mode: str | None = None):
+    def __init__(self, home: Path | None = None, log_dir: Path | None = None, cache_dir: Path | None = None):
         self.home = home or app_dir()
         self.store = Store.load(self.home)
         self._lock = threading.RLock()
@@ -48,10 +48,9 @@ class Controller:
         self._cond = threading.Condition()
         self.activity: collections.deque[dict] = collections.deque(maxlen=400)
         self.busy = False
-        self.ca_pem: str | None = None
         self.id_warning_shown = False
         self._last_game: tuple[bool, bool] | None = None
-        self._repatch_timer: threading.Timer | None = None
+        self._summary_timer: threading.Timer | None = None
         self._started_at = 0.0
         self._last_summary: tuple | None = None
         self._warned_quiet = False
@@ -65,21 +64,20 @@ class Controller:
             rivals_universes=set(self.store.rivals_universes),
             is_running=(lambda: bool(roblox.running_clients())) if sys.platform == "win32" else None,
         )
-        self.runner = ProxyRunner(
+        self.runner = CacheRunner(
             self.store.to_config(),
             self.home,
             on_hit=self._hit,
             on_log=lambda level, msg: self.log(msg, "warn" if level in ("WARNING", "ERROR", "CRITICAL") else ""),
-            mode=proxy_mode,
-            allow=self._allow_swaps,
+            cache_dir=cache_dir,
         )
-        self.log(f"Patchwork swaps {games.RIVALS_NAME} assets on this PC only, and only while you're in "
-                 f"{games.RIVALS_NAME}. It starts swapping on its own: add swaps, switch a profile on, and open Roblox.")
+        self.log(f"Patchwork swaps {games.RIVALS_NAME} assets in Roblox's cache on this PC. It works on its own: add "
+                 "swaps, switch a profile on, and play. A swap shows up once Roblox has downloaded that asset and "
+                 "loads it again (usually your next match).")
         for warning in self.store.warnings:
             self.log(warning, "warn")
         self.watcher.start()
-        if sys.platform == "win32":
-            threading.Thread(target=self._discover_loop, name="patchwork-discover", daemon=True).start()
+        threading.Thread(target=self._remove_old_setup, name="patchwork-cleanup", daemon=True).start()
 
     # ----- events ---------------------------------------------------------------
 
@@ -111,7 +109,7 @@ class Controller:
         self._emit("state")
 
     def _hit(self, hit: Hit) -> None:
-        self.log(f"Swapped {hit.asset_id} → {hit.replacement}  ({hit.swap_name})", "hit")
+        self.log(f"Swapped {hit.asset_id} → {hit.replacement} in Roblox's cache  ({hit.swap_name})", "hit")
 
     # ----- snapshot ---------------------------------------------------------------
 
@@ -130,11 +128,11 @@ class Controller:
             return {"tone": "busy", "short": "Working…", "text": "Working…"}
         if not self.runner.running:
             return {"tone": "idle", "short": "Stopped", "text": "Stopped"}
-        if state.in_rivals:
-            return {"tone": "on", "short": f"In {rivals}", "text": f"In {rivals} · swaps on"}
-        if state.in_game:
-            return {"tone": "paused", "short": "Paused", "text": f"Not {rivals} · swaps paused"}
-        return {"tone": "waiting", "short": "Waiting", "text": f"Waiting for {rivals}"}
+        if not self.runner.store.exists():
+            return {"tone": "waiting", "short": "No cache yet", "text": "Waiting for Roblox's cache (open Roblox once)"}
+        swapped = self.runner.swapper.stats.get("swapped", 0)
+        where = f"In {rivals} · " if state.in_rivals else ""
+        return {"tone": "on", "short": f"{swapped} swapped", "text": f"{where}{swapped} swapped in Roblox's cache"}
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -174,8 +172,8 @@ class Controller:
                 "paths": {"home": str(self.home), "configs": str(store.configs_dir)},
                 "rivals": {"name": games.RIVALS_NAME, "place_id": games.RIVALS_PLACE_ID},
                 "can_undo": bool(store._undo),
-                "installs": [i.label for i in roblox.find_installs()] + [
-                    f"{m.parent.name}/Modifications" for m in roblox.modifications_dirs()],
+                "cache": {"path": str(self.runner.store.directory), "found": self.runner.store.exists()},
+                "asset_states": {str(k): v for k, v in self.runner.swapper.state.items()},
                 "seq": self._seq,
             }
 
@@ -206,7 +204,8 @@ class Controller:
             self.runner.update_config(self.store.to_config())
             self._changed()
         if self.runner.running:
-            self.log("Saved. Rejoin the game (Clear Cache first if the asset already loaded) to see changes.")
+            self.log("Saved. The change applies to Roblox's cache within a few seconds; it shows the next time "
+                     "Roblox loads that asset (usually your next match).")
 
     # ----- profiles -----------------------------------------------------------------
 
@@ -370,107 +369,50 @@ class Controller:
         self.log(f"Exported {self.store.editing} to {path}.")
         return {"skipped": skipped}
 
-    # ----- proxy --------------------------------------------------------------------
+    # ----- the cache engine ----------------------------------------------------------
 
-    def _patch_roblox(self, quiet: bool) -> None:
-        if self.ca_pem is None:
-            self.ca_pem = ensure_ca(self.home)
-        report = roblox.patch_all(self.ca_pem)
-        for label in report.patched:
-            self.log(f"Set up {label} to trust Patchwork.")
-        for label, reason in report.failed:
-            if not quiet:
-                self.log(f"Couldn't update {label}: {reason}", "warn")
-        if not quiet and report.trusted_count == 0:
-            self.log("No Roblox install found. Install Roblox, then reopen Patchwork "
-                     "(the Microsoft Store version isn't supported).", "warn")
+    def _remove_old_setup(self) -> None:
+        """Versions before 2.0 changed Roblox's certificate list and a client setting; undo that once."""
+        try:
+            report = roblox.unpatch_all()
+            if report.patched:
+                self.log(f"Removed the certificate setup older Patchwork versions added to {len(report.patched)} "
+                         "Roblox folder(s). It isn't needed any more.")
+        except Exception:
+            pass
 
     def start(self, close_roblox: bool | None = None) -> dict | None:
-        """Start in the background; progress arrives as events.
-
-        Roblox only picks up Patchwork's certificate when it launches, so if it's
-        already open this returns {"confirm": "roblox_open"} first. Call again
-        with close_roblox=True to close it, or False to start anyway.
-        """
+        """Start watching Roblox's cache. (close_roblox is accepted for compatibility and ignored.)"""
         with self._lock:
             if self.busy or self.runner.running:
                 return None
-            open_now = roblox.running_clients(tuple(self.store.processes))
-            if open_now and close_roblox is None:
-                return {"confirm": "roblox_open", "running": open_now}
-            if open_now and close_roblox:
-                roblox.close_clients(tuple(self.store.processes))
-                self.log("Closed Roblox. Open it again after Patchwork starts.")
             if not any(s.enabled for s in self.store.active_swaps()):
                 self.log("No swaps are switched on yet: turn on a profile first.", "warn")
-            try:
-                self._patch_roblox(quiet=False)
-            except Exception as exc:
-                raise UserError(f"Couldn't prepare Roblox: {exc}") from exc
             self.runner.update_config(self.store.to_config())
-            running = roblox.running_clients(tuple(self.store.processes))
-            if not running:
-                removed, failed = roblox.clear_cache()
-                if failed:
-                    holders = roblox.lockers([Path(p) for p, _ in failed])
-                    who = ", ".join(f"{name} (PID {pid})" for pid, name in holders) or "another program"
-                    self.log(f"Couldn't clear Roblox's cache: it's in use by {who}. Close it and press Clear Cache, "
-                             "or Roblox will keep loading the assets it saved earlier.", "warn")
-                elif removed:
-                    self.log("Cleared Roblox's asset cache so swaps load fresh.")
-            self.busy = True
-        self._changed()
-
-        def work() -> None:
-            try:
-                self.runner.start()
-            except Exception as exc:
-                self.busy = False
-                self.log(f"Couldn't start: {exc}", "warn")
-                self._emit("error", {"title": "Patchwork couldn't start", "text": str(exc)})
-                self._changed()
-                return
-            self.busy = False
-            self.log(f"Patchwork is running. Open Roblox and join {games.RIVALS_NAME}.")
-            if running:
-                self.log("Roblox was already open, so it isn't using Patchwork yet. Press Clear Cache (it closes "
-                         "Roblox for you), then open Roblox again.", "warn")
-            self._started_at = time.monotonic()
+            self.runner.start()
+            if not self.runner.store.exists():
+                self.log(f"Roblox's cache isn't at {self.runner.store.directory} yet. Open Roblox once and "
+                         "Patchwork picks it up.", "warn")
+            self.log(f"Patchwork is running. Play {games.RIVALS_NAME}: swaps apply as Roblox downloads assets.")
             self._last_summary = None
-            self._warned_quiet = False
-            self._schedule_repatch()
-            self._changed()
-
-        threading.Thread(target=work, daemon=True).start()
+            self._schedule_summary()
+        self._changed()
         return None
 
     def _summarise(self) -> None:
-        """Every so often, say what Patchwork has seen from Roblox, and flag likely problems."""
-        st = self.runner.addon.stats
-        now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused, st.upstream_failed,
-               st.downloads, st.silent_closes)
-        if now != self._last_summary and (st.lookups or st.rejected or st.upstream_failed or st.silent_closes):
+        """Every so often, say how the swaps are doing."""
+        st = self.runner.swapper.stats
+        now = (st.get("swapped", 0), st.get("waiting", 0), st.get("unavailable", 0))
+        if now != self._last_summary:
             self._last_summary = now
-            parts = [f"{st.assets} asset(s) asked for in {st.lookups} request(s)", f"{st.swapped} swapped",
-                     f"{st.downloads} download(s) from Roblox's CDN"]
-            if st.paused:
-                parts.append(f"{st.paused} request(s) outside {games.RIVALS_NAME}")
-            if st.rejected:
-                parts.append(f"{st.rejected} certificate refusal(s)")
-            if st.upstream_failed:
-                parts.append(f"{st.upstream_failed} failed connection(s) to Roblox's server")
-            if st.silent_closes:
-                parts.append(f"{st.silent_closes} connection(s) Roblox closed without a request")
-            if st.protocols:
-                parts.append("protocol " + "/".join(sorted(st.protocols)))
-            self.log("Seen from Roblox so far: " + ", ".join(parts) + ".", "stats")
-        quiet_for = time.monotonic() - getattr(self, "_started_at", time.monotonic())
-        if (not self._warned_quiet and quiet_for > 90 and self.watcher.state.in_rivals
-                and st.lookups == 0 and st.rejected == 0 and st.silent_closes == 0):
-            self._warned_quiet = True
-            self.log(f"You're in {games.RIVALS_NAME} but Patchwork hasn't seen any of Roblox's asset requests yet. "
-                     "Roblox probably isn't going through Patchwork: close Roblox completely (check Task Manager "
-                     "for RobloxPlayerBeta.exe), then open it again while Patchwork is running.", "warn")
+            swapped, waiting, unavailable = now
+            parts = [f"{swapped} asset(s) swapped in Roblox's cache"]
+            if waiting:
+                parts.append(f"{waiting} waiting for Roblox to download them (they appear once you see them in game)")
+            if unavailable:
+                parts.append(f"{unavailable} can't be found (see the messages above)")
+            self.log("; ".join(parts) + ".", "stats")
+        self._changed()
 
     def stop(self) -> None:
         with self._lock:
@@ -484,97 +426,37 @@ class Controller:
             self.busy = False
             self.log("Patchwork stopped.")
             if self.store.restore_on_stop:
-                self.restore_roblox()
-            else:
-                self.log("Roblox now loads its normal assets (Clear Cache to drop swapped ones it saved).")
+                self.restore_cache()
             self._changed()
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _schedule_repatch(self) -> None:
-        # Roblox installs updates into a new folder, so keep trusting new versions.
+    def _schedule_summary(self) -> None:
         def tick() -> None:
             if self.runner.running:
-                try:
-                    self._patch_roblox(quiet=True)
-                except Exception:
-                    pass
                 try:
                     self._summarise()
                 except Exception:
                     pass
-                self._schedule_repatch()
+                self._schedule_summary()
 
-        self._repatch_timer = threading.Timer(REPATCH_SECONDS, tick)
-        self._repatch_timer.daemon = True
-        self._repatch_timer.start()
+        self._summary_timer = threading.Timer(SUMMARY_SECONDS, tick)
+        self._summary_timer.daemon = True
+        self._summary_timer.start()
 
-    def restore_roblox(self) -> None:
-        """Undo Patchwork's changes to Roblox and drop swapped assets from its cache."""
-        report = roblox.unpatch_all()
-        for label, reason in report.failed:
-            self.log(f"Couldn't restore {label}: {reason}", "warn")
-        if report.patched:
-            self.log(f"Removed Patchwork's certificate and setting from {len(report.patched)} Roblox folder(s).")
-        if roblox.running_clients():
-            self.log("Roblox is still open, so its cache wasn't cleared. Close Roblox and press Clear Cache "
-                     "to drop the swapped assets it saved.", "warn")
-        else:
-            roblox.clear_cache()
-            self.log("Cleared Roblox's asset cache. Roblox is back to normal.")
-
-    def _discover_loop(self) -> None:
-        while True:
-            try:
-                self.discover_installs()
-            except Exception:
-                pass
-            time.sleep(8)
-
-    def discover_installs(self) -> list[str]:
-        """Remember any Roblox install that's running from a folder Patchwork didn't know about.
-
-        Launchers such as Froststrap can keep Roblox somewhere unusual. Returns
-        the folders added.
-        """
-        known = {r.resolve() for r in roblox.version_roots()}
-        added = []
-        for exe in roblox.client_paths(tuple(self.store.processes)):
-            root = roblox.root_for_exe(exe)
-            try:
-                resolved = root.resolve()
-            except OSError:
-                continue
-            if resolved in known or str(root) in self.store.install_roots:
-                continue
-            self.store.install_roots.append(str(root))
-            added.append(str(root))
-            known.add(resolved)
-        if added:
-            self.store.save_settings()
-            roblox.set_extra_roots([Path(r) for r in self.store.install_roots])
-            running = self.runner.running
-            for root in added:
-                if running:
-                    self.log(f"Found Roblox running from {root}, which Patchwork hadn't set up before (a launcher "
-                             "such as Froststrap). It's set up now: close Roblox completely and open it again "
-                             "for swaps to work.", "warn")
-                else:
-                    self.log(f"Found Roblox running from {root} (a launcher such as Froststrap). Patchwork will "
-                             "set it up the next time it starts.")
-            if running:
-                try:
-                    self._patch_roblox(quiet=True)
-                except Exception:
-                    pass
-            self._changed()
-        return added
-
-    def _allow_swaps(self, header_place: int | None) -> bool:
-        """Called by the proxy for each asset request: swap only inside RIVALS."""
-        if header_place == games.RIVALS_PLACE_ID:
-            return True
-        return self.watcher.state.in_rivals
+    def restore_cache(self) -> int:
+        """Put every original asset back in Roblox's cache."""
+        try:
+            restored = self.runner.restore_all()
+        except Exception as exc:
+            self.log(f"Couldn't put Roblox's original assets back: {exc}", "warn")
+            return 0
+        if restored:
+            self.log(f"Put {restored} original asset(s) back in Roblox's cache.")
+        if self.runner.running:
+            self.runner.update_config(self.store.to_config())
+        self._changed()
+        return restored
 
     def _game_changed(self) -> None:
         state = self.watcher.state
@@ -586,8 +468,6 @@ class Controller:
         if now != self._last_game:
             self._last_game = now
             suffix = ""
-            if self.runner.running and state.in_game:
-                suffix = " (swaps on)" if state.in_rivals else " (swaps paused)"
             self.log(f"Roblox: {state.describe()}{suffix}", "game")
         self._changed()
 
@@ -622,19 +502,6 @@ class Controller:
     def clear_downloads(self) -> None:
         shutil.rmtree(self.home / "downloads", ignore_errors=True)
         self.log("Deleted downloaded replacement files. Patchwork downloads them again when needed.")
-
-    def remove_certificate(self) -> None:
-        if self.runner.running:
-            self.runner.stop()
-        report = roblox.unpatch_all()
-        for label in report.patched:
-            self.log(f"Removed Patchwork's certificate and setting from {label}.")
-        for label, reason in report.failed:
-            self.log(f"Couldn't update {label}: {reason}", "warn")
-        shutil.rmtree(ca_dir(self.home), ignore_errors=True)
-        self.ca_pem = None
-        self.log("Deleted Patchwork's certificate from this PC.")
-        self._changed()
 
     def set_setting(self, key: str, value: bool) -> None:
         if key not in ("restore_on_stop", "warn_id_swaps", "launch_at_login", "close_to_tray"):
@@ -690,11 +557,11 @@ class Controller:
     def shutdown(self) -> None:
         if self.runner.running:
             self.runner.stop()
-            if self.store.restore_on_stop:
-                try:
-                    self.restore_roblox()
-                except Exception:
-                    pass
-        if self._repatch_timer:
-            self._repatch_timer.cancel()
+        if self.store.restore_on_stop:
+            try:
+                self.runner.restore_all()
+            except Exception:
+                pass
+        if self._summary_timer:
+            self._summary_timer.cancel()
         self.watcher.stop()

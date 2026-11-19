@@ -173,21 +173,22 @@
         <p>Patchwork never touches the game's memory or your account. It starts swapping as soon as it opens; to stop it, quit Patchwork from its tray icon.</p>
         <label class="toggle-row" id="tray-row"><span><b>Keep running in the tray when I close the window</b><small>Swaps keep working with the window closed. Right-click the tray icon (next to the clock) to open Patchwork or quit.</small></span><span class="switch"><input type="checkbox" data-setting="close_to_tray"><i></i></span></label>
         <label class="toggle-row" id="login-row"><span><b>Start Patchwork when I sign in to Windows</b><small>Starts minimised and as administrator, without a Windows prompt. Swaps work as soon as Roblox opens.</small></span><span class="switch"><input type="checkbox" data-setting="launch_at_login"><i></i></span></label>
-        <label class="toggle-row"><span><b>Put Roblox back to normal when Patchwork quits</b><small>Removes Patchwork's certificate and setting and clears the asset cache.</small></span><span class="switch"><input type="checkbox" data-setting="restore_on_stop"><i></i></span></label>
+        <label class="toggle-row"><span><b>Put Roblox back to normal when Patchwork quits</b><small>Puts the original assets back in Roblox's cache.</small></span><span class="switch"><input type="checkbox" data-setting="restore_on_stop"><i></i></span></label>
         <label class="toggle-row"><span><b>Remind me that asset-ID swaps are visible</b><small>ID swaps make Roblox ask its servers for a different asset. Link and file swaps don't.</small></span><span class="switch"><input type="checkbox" data-setting="warn_id_swaps"><i></i></span></label>
       </div>
       <svg class="wave" viewBox="0 0 1200 20" preserveAspectRatio="none" aria-hidden="true"><path d="M0 10 C 50 0, 100 20, 150 10 S 250 0, 300 10 S 400 20, 450 10 S 550 0, 600 10 S 700 20, 750 10 S 850 0, 900 10 S 1000 20, 1050 10 S 1150 0, 1200 10 S 1300 20, 1350 10 S 1450 0, 1500 10"/></svg>
       <div class="card setting">
-        <div class="card-label">Roblox installs</div>
-        <p>Patchwork sets up every copy of Roblox it finds, including launchers like Bloxstrap, Fishstrap and Froststrap. If yours is missing, start a game with it while Patchwork is open: Patchwork spots where Roblox runs from and adds it.</p>
-        <ul class="installs" id="installs"></ul>
+        <div class="card-label">How swaps work</div>
+        <p>Roblox saves every asset it downloads in a cache on your PC. Patchwork finds the cached copy of each asset you swap and replaces it, so Roblox shows your version the next time it loads that asset (usually your next match). It never touches Roblox's connection, the game's memory or your account, and it works the same with Bloxstrap, Fishstrap or Froststrap.</p>
+        <p>Images, sounds and skins (a mesh or model swapped for another skin's) can be swapped. 3D objects can't be removed or made invisible.</p>
+        <p class="cache-path">Roblox's cache: <code id="cache-path"></code> <span id="cache-found"></span></p>
       </div>
       <svg class="wave" viewBox="0 0 1200 20" preserveAspectRatio="none" aria-hidden="true"><path d="M0 10 C 50 0, 100 20, 150 10 S 250 0, 300 10 S 400 20, 450 10 S 550 0, 600 10 S 700 20, 750 10 S 850 0, 900 10 S 1000 20, 1050 10 S 1150 0, 1200 10 S 1300 20, 1350 10 S 1450 0, 1500 10"/></svg>
       <div class="settings-two">
         <div class="card setting">
-          <div class="card-label">Certificate</div>
-          <p>Patchwork made a certificate just for this PC and added it to Roblox's own list (not Windows'). Removing it stops Patchwork and takes it out of every Roblox install.</p>
-          <button class="btn danger" id="remove-cert">Remove certificate</button>
+          <div class="card-label">Undo swaps</div>
+          <p>Put every original asset back in Roblox's cache now. Swaps that are still switched on get applied again the next time Roblox downloads those assets.</p>
+          <button class="btn danger" id="restore-cache">Put originals back</button>
         </div>
         <div class="card setting">
           <div class="card-label">Data</div>

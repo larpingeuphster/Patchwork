@@ -25,39 +25,17 @@ def run(report_path: str) -> int:
             ok = False
             lines.append(f"FAIL  {name}\n{traceback.format_exc()}")
 
-    def redirector() -> str:
-        if sys.platform != "win32":
-            return "skipped (not Windows)"
-        import mitmproxy_windows
+    def cache_engine() -> str:
+        from . import cache
 
-        pkg = Path(mitmproxy_windows.__file__).parent
-        exes = sorted(p.name for p in pkg.rglob("*.exe"))
-        if not exes:
-            raise RuntimeError(f"no redirector executable in {pkg}")
-        return ", ".join(exes)
+        if cache.checksum(b"roblox-assettypeid: 1\r\n") != 0xAF46D420:
+            raise RuntimeError("cache checksum key is wrong")
+        import zstandard  # noqa: F401
+        from PIL import Image  # noqa: F401
 
-    def local_mode() -> str:
-        from mitmproxy.proxy.mode_specs import ProxyMode
+        from .swapper import CacheSwapper  # noqa: F401
 
-        return ProxyMode.parse("local:RobloxPlayerBeta.exe").description
-
-    def certificate() -> str:
-        from .proxy import ensure_ca
-
-        with tempfile.TemporaryDirectory() as tmp:
-            pem = ensure_ca(Path(tmp))
-        if "BEGIN CERTIFICATE" not in pem:
-            raise RuntimeError("certificate authority PEM looks wrong")
-        return "generated"
-
-    def addons() -> str:
-        from mitmproxy import addons as mitm_addons
-
-        from .config import Config
-        from .proxy import SwapAddon
-
-        SwapAddon(Config())
-        return f"{len(mitm_addons.default_addons())} mitmproxy addons"
+        return "checksum key ok"
 
     def ui() -> str:
         from . import app as _app  # noqa: F401
@@ -95,10 +73,7 @@ def run(report_path: str) -> int:
 
         return "pystray + icon"
 
-    check("mitmproxy local mode", local_mode)
-    check("Windows redirector", redirector)
-    check("certificate authority", certificate)
-    check("swap addon", addons)
+    check("cache engine", cache_engine)
     check("interface", ui)
     check("native window", window)
     check("tray icon", tray_icon)

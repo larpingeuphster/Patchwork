@@ -169,10 +169,8 @@
     $("#stat-game").textContent = S.game.in_game ? (S.game.in_rivals ? S.rivals.name : "Another game") : "Not in a game";
     $("#rivals-place").textContent = S.rivals.place_id;
     $("#home-path").textContent = S.paths.home;
-    const inst = $("#installs");
-    inst.innerHTML = S.installs.length
-      ? S.installs.map((i) => `<li><code>${esc(i)}</code></li>`).join("")
-      : "<li>No Roblox install found yet.</li>";
+    $("#cache-path").textContent = S.cache.path;
+    $("#cache-found").textContent = S.cache.found ? "" : "(not found yet: open Roblox once)";
     $$("[data-setting]").forEach((el) => { el.checked = !!S.settings[el.dataset.setting]; });
   }
 
@@ -553,10 +551,12 @@
     }
   });
   $$("[data-setting]").forEach((el) => el.addEventListener("change", () => act("set_setting", { key: el.dataset.setting, value: el.checked })));
-  $("#remove-cert").addEventListener("click", async () => {
-    const ok = await confirmBox("Remove certificate",
-      "<p>Stop Patchwork, remove its certificate and setting from every Roblox install, and delete this PC's certificate?</p><p>Your profiles are kept. To swap again, reopen Patchwork or click the status badge; it makes a new certificate.</p>", "Remove", "danger");
-    if (ok && (await act("remove_certificate")) !== undefined) toast("Certificate removed");
+  $("#restore-cache").addEventListener("click", async () => {
+    const ok = await confirmBox("Put originals back",
+      "<p>Put every original asset back in Roblox's cache?</p><p>Swaps that are still switched on are applied again the next time Roblox downloads those assets. To stop swapping, switch the profiles off first.</p>", "Put back", "danger");
+    if (!ok) return;
+    const n = await act("restore_cache");
+    if (n !== undefined) toast(n ? `Put ${n} original asset(s) back` : "Nothing to put back");
   });
   $("#open-home").addEventListener("click", () => act("open_folder", { which: "home" }));
   $("#clear-downloads").addEventListener("click", async () => { if ((await act("clear_downloads")) !== undefined) toast("Downloaded files cleared"); });

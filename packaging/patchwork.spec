@@ -1,7 +1,5 @@
 # PyInstaller spec for the single-file Windows build.
 # Build from the repo root with:  pyinstaller packaging/patchwork.spec --noconfirm
-# mitmproxy and mitmproxy_rs ship their own PyInstaller hooks (including the
-# Windows redirector helper), so nothing extra is listed for them here.
 import os
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
@@ -14,7 +12,7 @@ a = Analysis(
         (os.path.join(ROOT, "patchwork", "webui"), os.path.join("patchwork", "webui")),
     ],
     hiddenimports=["patchwork.app", "patchwork.selfcheck", "webview.platforms.edgechromium", "pystray._win32"],
-    excludes=["mitmproxy.tools.console", "mitmproxy.tools.web", "urwid", "webview.platforms.qt", "webview.platforms.gtk"],
+    excludes=["webview.platforms.qt", "webview.platforms.gtk", "tkinter.test"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

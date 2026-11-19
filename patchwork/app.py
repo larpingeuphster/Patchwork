@@ -12,6 +12,7 @@ import http.client
 import json
 import os
 import sys
+from pathlib import Path
 import threading
 import webbrowser
 
@@ -102,8 +103,9 @@ def main(argv: list[str] | None = None) -> None:
     if _show_running_instance():
         return
 
-    # PATCHWORK_PROXY_MODE (e.g. "regular@8080") is for development on non-Windows machines.
-    controller = Controller(proxy_mode=os.environ.get("PATCHWORK_PROXY_MODE") or None)
+    # PATCHWORK_CACHE_DIR points at a Roblox cache folder elsewhere (for development).
+    cache_dir = os.environ.get("PATCHWORK_CACHE_DIR")
+    controller = Controller(cache_dir=Path(cache_dir) if cache_dir else None)
     server = UiServer(controller, port=int(os.environ.get("PATCHWORK_PORT", "0")))
     server.start()
     _write_instance(server)

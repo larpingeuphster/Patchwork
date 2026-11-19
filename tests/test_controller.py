@@ -110,40 +110,45 @@ def test_settings(ctl):
         ctl.set_setting("evil", True)
 
 
-def test_start_and_stop_with_regular_proxy(tmp_path, monkeypatch):
+def test_cache_swaps_end_to_end(tmp_path, monkeypatch):
+    """Start, swap an image in a (synthetic) Roblox cache, then put it back on quit."""
+    from patchwork import cache, swapper
+    from tests.test_cache import PNG_HEADERS, make_store, png
+
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    monkeypatch.delenv("TEMP", raising=False)
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", proxy_mode=f"regular@{port}")
+    red, blue = png((255, 0, 0, 255)), png((0, 0, 255, 255))
+    monkeypatch.setattr(swapper, "fetch_asset", lambda i: {11: red, 22: blue}[i])
+    eid = b"\x05" * 16
+    store = make_store(tmp_path, [(eid, cache.wrap("https://c0.rbxcdn.com/r", PNG_HEADERS, red), 10)])
+    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=store.directory)
+    ctl.runner.swapper.idmap.fetch = lambda i: {11: red, 22: blue}[i]
+    ctl.runner.interval = 0.1
     try:
+        ctl.save_swap("Blue", "11", "22", confirmed=True)
         ctl.start()
         for _ in range(100):
-            if ctl.snapshot()["running"]:
+            if ctl.runner.swapper.state.get(11) == "swapped":
                 break
-            time.sleep(0.1)
-        snap = ctl.snapshot()
-        assert snap["running"] and snap["status"]["short"] == "Waiting"
-        ctl.stop()
-        for _ in range(100):
-            if not ctl.snapshot()["running"] and not ctl.busy:
-                break
-            time.sleep(0.1)
-        assert not ctl.snapshot()["running"]
-        texts = [e["text"] for e in ctl.activity_log()]
-        assert any("Patchwork is running" in t for t in texts) and "Patchwork stopped." in texts
+            time.sleep(0.05)
+        conn = store.connect()
+        assert store.read_body(conn, eid)[0] == blue
+        conn.close()
+        assert ctl.snapshot()["status"]["short"] == "1 swapped"
+        assert any("in Roblox's cache" in e["text"] for e in ctl.activity_log())
     finally:
         ctl.shutdown()
+    conn = store.connect()
+    assert store.read_body(conn, eid)[0] == red  # put back when Patchwork quits
+    conn.close()
 
 
-def test_start_asks_when_roblox_is_open(ctl, monkeypatch):
+def test_start_never_closes_roblox(ctl, monkeypatch):
     from patchwork import roblox
     closed = []
     monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: ["RobloxPlayerBeta.exe"])
-    monkeypatch.setattr(roblox, "close_clients", lambda *a, **k: closed.append(True) or ["RobloxPlayerBeta.exe"])
-    assert ctl.start() == {"confirm": "roblox_open", "running": ["RobloxPlayerBeta.exe"]}
-    assert not ctl.busy and not closed
+    monkeypatch.setattr(roblox, "close_clients", lambda *a, **k: closed.append(True))
+    assert ctl.start() is None
+    assert ctl.runner.running and not closed  # cache swaps work with Roblox open
 
 
 def test_clear_cache_names_the_program_holding_it(ctl, monkeypatch):
@@ -153,21 +158,6 @@ def test_clear_cache_names_the_program_holding_it(ctl, monkeypatch):
     monkeypatch.setattr(roblox, "lockers", lambda paths: [(1234, "Fishstrap")])
     with pytest.raises(UserError, match=r"Fishstrap \(PID 1234\)"):
         ctl.clear_cache()
-
-
-def test_discovers_install_from_running_roblox(ctl, monkeypatch, tmp_path):
-    from patchwork import roblox
-    exe = tmp_path / "Froststrap" / "Versions" / "version-abc" / "RobloxPlayerBeta.exe"
-    exe.parent.mkdir(parents=True)
-    exe.write_bytes(b"")
-    monkeypatch.setattr(roblox, "_extra_roots", [])
-    monkeypatch.setattr(roblox, "client_paths", lambda *a, **k: [exe])
-    # On Windows the controller's own background finder may get there first.
-    ctl.discover_installs()
-    assert ctl.store.install_roots == [str(exe.parent.parent)]
-    assert exe.parent.parent in roblox.version_roots()
-    assert ctl.discover_installs() == []  # remembered
-    assert "Froststrap/version-abc" in ctl.snapshot()["installs"]
 
 
 def test_clear_cache_offers_to_close_roblox(ctl, monkeypatch):
@@ -186,27 +176,11 @@ def test_clear_cache_offers_to_close_roblox(ctl, monkeypatch):
     assert state["closed"] == 1
 
 
-def test_accepting_the_notice_starts_patchwork(tmp_path, monkeypatch):
-    import socket
-    from patchwork import roblox
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    monkeypatch.delenv("TEMP", raising=False)
-    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: [])
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    c = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", proxy_mode=f"regular@{port}")
-    try:
-        c.auto_start()  # nothing happens before the notice is accepted
-        assert not c.busy and not c.runner.running
-        c.accept_notice()
-        for _ in range(100):
-            if c.runner.running:
-                break
-            time.sleep(0.1)
-        assert c.runner.running
-    finally:
-        c.shutdown()
+def test_accepting_the_notice_starts_patchwork(ctl):
+    ctl.auto_start()  # nothing happens before the notice is accepted
+    assert not ctl.runner.running
+    ctl.accept_notice()
+    assert ctl.runner.running
 
 
 def test_launch_at_login_setting(ctl, monkeypatch):

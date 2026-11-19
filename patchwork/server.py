@@ -29,7 +29,7 @@ API_METHODS = {
     "delete_profile",
     "save_swap", "set_swaps_enabled", "remove_swaps", "undo",
     "pick_file", "import_preset", "export_preset",
-    "start", "stop", "clear_cache", "clear_downloads", "remove_certificate",
+    "start", "stop", "clear_cache", "clear_downloads", "restore_cache",
     "set_setting", "accept_notice", "open_folder",
 }
 
