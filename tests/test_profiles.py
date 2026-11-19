@@ -107,3 +107,18 @@ def test_retired_cdn_hosts_are_dropped_from_saved_settings(tmp_path):
         "intercept_hosts": ["assetdelivery.roblox.com", "fts.rbxcdn.com", "contentdelivery.roblox.com", "x.test"]}))
     s = Store.load(tmp_path)
     assert s.intercept_hosts == ["assetdelivery.roblox.com", "x.test"]
+
+
+def test_keep_swaps_default_and_one_time_migration(tmp_path):
+    fresh = Store.load(tmp_path / "new")
+    assert fresh.restore_on_stop is False and not fresh.migrated_keep_swaps
+    old = tmp_path / "old"
+    (old / "configs").mkdir(parents=True)
+    (old / "settings.json").write_text(json.dumps({"restore_on_stop": True}))
+    s = Store.load(old)
+    assert s.restore_on_stop is False and s.migrated_keep_swaps
+    s.save_settings()
+    s.restore_on_stop = True  # the user turns it back on
+    s.save_settings()
+    again = Store.load(old)
+    assert again.restore_on_stop is True and not again.migrated_keep_swaps

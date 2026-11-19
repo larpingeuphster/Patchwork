@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patchwork"
-version = "2.0.2"
+version = "2.0.3"
 description = "Swap RIVALS assets (images, sounds, skins) in Roblox's cache on your own PC."
 readme = "README.md"
 license = "MIT"

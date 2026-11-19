@@ -123,6 +123,8 @@ def test_cache_swaps_end_to_end(tmp_path, monkeypatch):
     ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=store.directory)
     ctl.runner.swapper.idmap.fetch = lambda i: {11: red, 22: blue}[i]
     ctl.runner.interval = 0.1
+    assert ctl.store.restore_on_stop is False  # default: swaps stay between sessions
+    ctl.set_setting("restore_on_stop", True)
     try:
         ctl.save_swap("Blue", "11", "22", confirmed=True)
         ctl.start()

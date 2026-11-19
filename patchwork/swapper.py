@@ -547,7 +547,7 @@ class CacheRunner:
     """Runs the cache swapper on a background thread while Patchwork is on."""
 
     def __init__(self, config, app_dir: Path, on_hit: Callable[[Hit], None], on_log: Callable[[str, str], None],
-                 cache_dir: Path | None = None, interval: float = 2.0):
+                 cache_dir: Path | None = None, interval: float = 1.0):
         directory = cache_dir or cache.default_dir() or (app_dir / "no-roblox-cache")
         self.swapper = CacheSwapper(cache.Store(directory), app_dir, Downloads(app_dir / "downloads"), on_hit)
         self.swapper.set_swaps(config.swaps)

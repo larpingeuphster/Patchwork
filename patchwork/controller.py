@@ -76,6 +76,10 @@ class Controller:
                  "loads it again (usually your next match).")
         for warning in self.store.warnings:
             self.log(warning, "warn")
+        if self.store.migrated_keep_swaps:
+            self.store.save_settings()
+            self.log("Swaps now stay in Roblox's cache when Patchwork quits, so they load as soon as RIVALS starts "
+                     "instead of a match later. Change this in Settings if you prefer.")
         self.watcher.start()
         threading.Thread(target=self._remove_old_setup, name="patchwork-cleanup", daemon=True).start()
 

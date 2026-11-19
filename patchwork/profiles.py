@@ -51,12 +51,15 @@ class Store:
     intercept_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_INTERCEPT_HOSTS))
     processes: list[str] = field(default_factory=lambda: list(DEFAULT_PROCESSES))
     notice_accepted: bool = False  # the first-run risk notice
-    restore_on_stop: bool = True  # Stop also clears the cache and undoes Roblox changes
+    # Put original assets back in Roblox's cache when Patchwork quits. Off by default: kept
+    # swaps load as soon as RIVALS starts, instead of a match later.
+    restore_on_stop: bool = False
     warn_id_swaps: bool = True  # explain that ID swaps are visible to Roblox's servers
     rivals_universes: list[int] = field(default_factory=list)  # learned from Roblox's log
     install_roots: list[str] = field(default_factory=list)  # where Roblox was seen running from
     launch_at_login: bool = True  # start Patchwork when the user signs in to Windows
     close_to_tray: bool = True  # closing the window keeps Patchwork running in the tray
+    migrated_keep_swaps: bool = False  # this load switched restore_on_stop off for an existing user
     warnings: list[str] = field(default_factory=list)
     _undo: list[Snapshot] = field(default_factory=list)
 
@@ -94,7 +97,12 @@ class Store:
         store.intercept_hosts = list(dict.fromkeys(DEFAULT_INTERCEPT_HOSTS + saved))
         store.processes = list(settings.get("processes") or DEFAULT_PROCESSES)
         store.notice_accepted = bool(settings.get("notice_accepted", False))
-        store.restore_on_stop = bool(settings.get("restore_on_stop", True))
+        store.restore_on_stop = bool(settings.get("restore_on_stop", False))
+        if not settings.get("keep_swaps_default_v2"):
+            # 1.x/2.0 defaulted to putting originals back on quit, which made every session
+            # start over. Switch it off once; the user can turn it back on in Settings.
+            store.restore_on_stop = False
+            store.migrated_keep_swaps = bool(settings)
         store.warn_id_swaps = bool(settings.get("warn_id_swaps", True))
         store.rivals_universes = [int(u) for u in settings.get("rivals_universes", []) if str(u).isdigit()]
         store.install_roots = [str(r) for r in settings.get("install_roots", []) if isinstance(r, str)]
@@ -149,6 +157,7 @@ class Store:
             "processes": self.processes,
             "notice_accepted": self.notice_accepted,
             "restore_on_stop": self.restore_on_stop,
+            "keep_swaps_default_v2": True,
             "warn_id_swaps": self.warn_id_swaps,
             "rivals_universes": self.rivals_universes,
             "install_roots": self.install_roots,

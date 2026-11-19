@@ -521,6 +521,10 @@
 
   // ---------- footer, power, settings ----------
   $("#clear-cache").addEventListener("click", async () => {
+    const sure = await confirmBox("Clear Roblox's cache?",
+      "<p>This deletes everything Roblox has saved, <b>including your swapped assets</b>. They come back once Roblox downloads those assets again, and show from the match after that.</p>" +
+      "<p>You usually don't need this: Patchwork swaps assets as Roblox downloads them.</p>", "Clear cache", "danger");
+    if (!sure) return;
     let r;
     try { r = await api("clear_cache"); } catch (e) { return alertBox("Couldn't clear the cache", e.message); }
     if (r && r.confirm === "roblox_open") {
