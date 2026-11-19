@@ -194,6 +194,28 @@ def test_launch_at_login_setting(ctl, monkeypatch):
     assert calls == ["off", "on"] and ctl.snapshot()["settings"]["launch_at_login"] is True
 
 
+def test_cache_connection_closes_from_another_thread(tmp_path, caplog):
+    """The watcher opens the index on its thread; Clear Cache closes it from another one."""
+    import sqlite3
+    import threading
+    from patchwork import cache, swapper
+    from patchwork.downloads import Downloads
+    from tests.test_cache import PNG_HEADERS, make_store, png
+    store = make_store(tmp_path, [(b"\x01" * 16, cache.wrap("u", PNG_HEADERS, png()), 10)])
+    sw = swapper.CacheSwapper(store, tmp_path / "app", Downloads(tmp_path / "dl"), lambda h: None)
+    t = threading.Thread(target=lambda: sw.tick(force=True))
+    t.start()
+    t.join()
+    conn = sw._conn
+    assert conn is not None
+    import logging
+    with caplog.at_level(logging.ERROR, logger="patchwork"):
+        sw.close()  # from this (different) thread
+    assert not [r for r in caplog.records if "Couldn't close" in r.getMessage()]
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")  # really closed (not just "wrong thread")
+
+
 def test_clear_cache_lets_go_of_the_cache_first(tmp_path, monkeypatch):
     from patchwork import cache, roblox
     from tests.test_cache import PNG_HEADERS, make_store, png

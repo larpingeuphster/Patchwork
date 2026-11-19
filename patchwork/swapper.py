@@ -396,7 +396,7 @@ class CacheSwapper:
                 try:
                     self._conn.close()
                 except Exception:
-                    pass
+                    log.exception("Couldn't close Roblox's cache index")
                 self._conn = None
 
     def _links(self, conn, entries: list[cache.Entry]) -> dict[int, cache.Entry]:

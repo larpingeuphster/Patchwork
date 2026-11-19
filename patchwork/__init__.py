@@ -1,3 +1,3 @@
 """Patchwork: swap Roblox assets on your own PC."""
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"

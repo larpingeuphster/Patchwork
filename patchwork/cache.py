@@ -265,7 +265,10 @@ class Store:
         return self.db_path.is_file()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5, isolation_level=None)
+        # Used from more than one thread (the watcher and the Clear Cache button), always under
+        # the swapper's lock; without check_same_thread=False, close() from another thread fails
+        # and the file stays locked on Windows.
+        conn = sqlite3.connect(str(self.db_path), timeout=5, isolation_level=None, check_same_thread=False)
         conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
