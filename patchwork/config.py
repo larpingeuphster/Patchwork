@@ -19,9 +19,11 @@ KIND_REMOVE = "remove"  # make the asset not load at all
 KINDS = (KIND_ASSET, KIND_FILE, KIND_URL, KIND_REMOVE)
 REMOVE_WORDS = ("remove", "none", "nothing", "delete")
 
-# Roblox's asset lookup server plus the two servers it downloads asset content
-# from (the same set Fleasion handles). Everything else passes straight through.
-DEFAULT_INTERCEPT_HOSTS = ["assetdelivery.roblox.com", "fts.rbxcdn.com", "contentdelivery.roblox.com"]
+# Only Roblox's asset lookup server is decrypted; everything else passes straight
+# through. (1.0.5-1.0.6 also decrypted the CDN hosts below, which broke asset
+# downloads, so they're removed from saved settings too.)
+DEFAULT_INTERCEPT_HOSTS = ["assetdelivery.roblox.com"]
+RETIRED_HOSTS = {"fts.rbxcdn.com", "contentdelivery.roblox.com"}
 DEFAULT_PROCESSES = ["RobloxPlayerBeta.exe"]
 
 

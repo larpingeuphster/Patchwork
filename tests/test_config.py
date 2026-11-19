@@ -17,7 +17,7 @@ def test_round_trip(tmp_path):
 def test_missing_file_gives_defaults(tmp_path):
     cfg = Config.load(tmp_path / "nope.json")
     assert cfg.swaps == []
-    assert cfg.intercept_hosts == ["assetdelivery.roblox.com", "fts.rbxcdn.com", "contentdelivery.roblox.com"]
+    assert cfg.intercept_hosts == ["assetdelivery.roblox.com"]
     assert cfg.processes == ["RobloxPlayerBeta.exe"]
 
 

@@ -99,3 +99,11 @@ def test_clean_name(raw, clean):
 def test_clean_name_rejects_empty():
     with pytest.raises(ValueError):
         clean_name(' /:* ')
+
+
+def test_retired_cdn_hosts_are_dropped_from_saved_settings(tmp_path):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "intercept_hosts": ["assetdelivery.roblox.com", "fts.rbxcdn.com", "contentdelivery.roblox.com", "x.test"]}))
+    s = Store.load(tmp_path)
+    assert s.intercept_hosts == ["assetdelivery.roblox.com", "x.test"]

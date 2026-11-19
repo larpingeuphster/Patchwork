@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import presets
-from .config import DEFAULT_INTERCEPT_HOSTS, DEFAULT_PROCESSES, KIND_FILE, Config, Swap, app_dir
+from .config import DEFAULT_INTERCEPT_HOSTS, RETIRED_HOSTS, DEFAULT_PROCESSES, KIND_FILE, Config, Swap, app_dir
 
 DEFAULT_PROFILE = "Default"
 _BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -89,8 +89,9 @@ class Store:
                 store.warnings.append(f"settings.json couldn't be read ({exc}); using defaults.")
         store.enabled = [n for n in settings.get("enabled", [DEFAULT_PROFILE]) if n in store.profiles]
         store.editing = settings.get("editing", DEFAULT_PROFILE)
-        # Older settings only listed assetdelivery; always include the current defaults.
-        store.intercept_hosts = list(dict.fromkeys(DEFAULT_INTERCEPT_HOSTS + list(settings.get("intercept_hosts") or [])))
+        # Always include the current defaults, and drop hosts that are no longer intercepted.
+        saved = [h for h in (settings.get("intercept_hosts") or []) if h not in RETIRED_HOSTS]
+        store.intercept_hosts = list(dict.fromkeys(DEFAULT_INTERCEPT_HOSTS + saved))
         store.processes = list(settings.get("processes") or DEFAULT_PROCESSES)
         store.notice_accepted = bool(settings.get("notice_accepted", False))
         store.restore_on_stop = bool(settings.get("restore_on_stop", True))
