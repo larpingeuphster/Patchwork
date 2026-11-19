@@ -19,7 +19,9 @@ KIND_REMOVE = "remove"  # make the asset not load at all
 KINDS = (KIND_ASSET, KIND_FILE, KIND_URL, KIND_REMOVE)
 REMOVE_WORDS = ("remove", "none", "nothing", "delete")
 
-DEFAULT_INTERCEPT_HOSTS = ["assetdelivery.roblox.com"]
+# Roblox's asset lookup server plus the two servers it downloads asset content
+# from (the same set Fleasion handles). Everything else passes straight through.
+DEFAULT_INTERCEPT_HOSTS = ["assetdelivery.roblox.com", "fts.rbxcdn.com", "contentdelivery.roblox.com"]
 DEFAULT_PROCESSES = ["RobloxPlayerBeta.exe"]
 
 

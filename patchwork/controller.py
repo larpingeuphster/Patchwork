@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, games, presets, roblox
+from . import __version__, games, presets, roblox, startup
 from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, app_dir, swap_from_inputs
 from .profiles import Store
 from .proxy import ProxyRunner, ca_dir, ensure_ca
@@ -73,7 +73,7 @@ class Controller:
             allow=self._allow_swaps,
         )
         self.log(f"Patchwork swaps {games.RIVALS_NAME} assets on this PC only, and only while you're in "
-                 f"{games.RIVALS_NAME}. Add swaps, switch a profile on, then press Start.")
+                 f"{games.RIVALS_NAME}. It starts swapping on its own: add swaps, switch a profile on, and open Roblox.")
         for warning in self.store.warnings:
             self.log(warning, "warn")
         self.watcher.start()
@@ -164,7 +164,9 @@ class Controller:
                 "settings": {
                     "restore_on_stop": store.restore_on_stop,
                     "warn_id_swaps": store.warn_id_swaps,
+                    "launch_at_login": store.launch_at_login,
                 },
+                "startup_supported": startup.supported(),
                 "notice_accepted": store.notice_accepted,
                 "paths": {"home": str(self.home), "configs": str(store.configs_dir)},
                 "rivals": {"name": games.RIVALS_NAME, "place_id": games.RIVALS_PLACE_ID},
@@ -377,7 +379,7 @@ class Controller:
             if not quiet:
                 self.log(f"Couldn't update {label}: {reason}", "warn")
         if not quiet and report.trusted_count == 0:
-            self.log("No Roblox install found. Install Roblox, then press Start again "
+            self.log("No Roblox install found. Install Roblox, then reopen Patchwork "
                      "(the Microsoft Store version isn't supported).", "warn")
 
     def start(self, close_roblox: bool | None = None) -> dict | None:
@@ -428,8 +430,8 @@ class Controller:
             self.busy = False
             self.log(f"Patchwork is running. Open Roblox and join {games.RIVALS_NAME}.")
             if running:
-                self.log("Roblox was already open, so it won't use Patchwork until you close it and open it "
-                         "again.", "warn")
+                self.log("Roblox was already open, so it isn't using Patchwork yet. Press Clear Cache (it closes "
+                         "Roblox for you), then open Roblox again.", "warn")
             self._started_at = time.monotonic()
             self._last_summary = None
             self._warned_quiet = False
@@ -442,10 +444,12 @@ class Controller:
     def _summarise(self) -> None:
         """Every so often, say what Patchwork has seen from Roblox, and flag likely problems."""
         st = self.runner.addon.stats
-        now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused, st.upstream_failed)
+        now = (st.trusted, st.rejected, st.lookups, st.assets, st.swapped, st.paused, st.upstream_failed,
+               st.downloads)
         if now != self._last_summary and (st.lookups or st.rejected or st.upstream_failed):
             self._last_summary = now
-            parts = [f"{st.assets} asset(s) asked for in {st.lookups} request(s)", f"{st.swapped} swapped"]
+            parts = [f"{st.assets} asset(s) asked for in {st.lookups} request(s)", f"{st.swapped} swapped",
+                     f"{st.downloads} download(s) from Roblox's CDN"]
             if st.paused:
                 parts.append(f"{st.paused} request(s) outside {games.RIVALS_NAME}")
             if st.rejected:
@@ -550,7 +554,7 @@ class Controller:
                              "for swaps to work.", "warn")
                 else:
                     self.log(f"Found Roblox running from {root} (a launcher such as Froststrap). Patchwork will "
-                             "set it up when you press Start.")
+                             "set it up the next time it starts.")
             if running:
                 try:
                     self._patch_roblox(quiet=True)
@@ -626,16 +630,47 @@ class Controller:
         self._changed()
 
     def set_setting(self, key: str, value: bool) -> None:
-        if key not in ("restore_on_stop", "warn_id_swaps"):
+        if key not in ("restore_on_stop", "warn_id_swaps", "launch_at_login"):
             raise UserError(f"Unknown setting {key}")
         setattr(self.store, key, bool(value))
         self.store.save_settings()
+        if key == "launch_at_login":
+            self.apply_launch_at_login(announce=True)
         self._changed()
+
+    def apply_launch_at_login(self, announce: bool = False) -> None:
+        """Register or remove the start-with-Windows task to match the setting."""
+        if not startup.supported():
+            return
+        if self.store.launch_at_login:
+            error = startup.enable()
+            if error:
+                self.log(f"Couldn't set Patchwork to start with Windows: {error}", "warn")
+            elif announce:
+                self.log("Patchwork will start with Windows (as administrator, without a prompt).")
+        else:
+            error = startup.disable()
+            if error:
+                self.log(f"Couldn't stop Patchwork starting with Windows: {error}", "warn")
+            elif announce:
+                self.log("Patchwork won't start with Windows any more.")
+
+    def auto_start(self) -> None:
+        """Start swapping as soon as the window is up (there is no Start button)."""
+        if not self.store.notice_accepted or self.runner.running or self.busy:
+            return
+        try:
+            self.start(close_roblox=False)
+        except UserError as exc:
+            self.log(str(exc), "warn")
+            self._emit("error", {"title": "Patchwork couldn't start", "text": str(exc)})
 
     def accept_notice(self) -> None:
         self.store.notice_accepted = True
         self.store.save_settings()
         self._changed()
+        self.apply_launch_at_login()
+        self.auto_start()
 
     def open_folder(self, which: str) -> None:
         path = self.store.configs_dir if which == "configs" else self.home

@@ -46,6 +46,7 @@ class UiServer:
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         self.on_quit = None  # set by the window
+        self.on_show = None  # set by the window
         self._thread: threading.Thread | None = None
 
     @property
@@ -120,6 +121,12 @@ class UiServer:
                 except ValueError:
                     return self._json(400, {"ok": False, "error": "bad request"})
                 path = urlparse(self.path).path
+                if path == "/api/show":
+                    # Another copy of Patchwork was opened: bring this window forward instead.
+                    self._json(200, {"ok": True})
+                    if server.on_show:
+                        threading.Thread(target=server.on_show, daemon=True).start()
+                    return
                 if path == "/api/quit":
                     self._json(200, {"ok": True})
                     if server.on_quit:

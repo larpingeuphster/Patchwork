@@ -61,3 +61,17 @@ def test_api_calls(srv):
     _, body, _ = request(srv, "GET", "/api/events?after=0")
     events = json.loads(body)["events"]
     assert any(e["kind"] == "state" for e in events)
+
+
+def test_second_launch_shows_the_running_window(srv, tmp_path, monkeypatch):
+    import threading
+    from patchwork import app
+    monkeypatch.setenv("PATCHWORK_HOME", str(tmp_path / "home"))
+    shown = threading.Event()
+    srv.on_show = shown.set
+    assert app._show_running_instance() is False  # nothing recorded yet
+    app._write_instance(srv)
+    assert app._show_running_instance() is True
+    assert shown.wait(5)
+    app._clear_instance()
+    assert app._show_running_instance() is False

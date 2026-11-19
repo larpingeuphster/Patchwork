@@ -97,8 +97,9 @@ def test_events_long_poll(ctl):
     ctl.log("hello", "warn")
     events = ctl.events_after(start, timeout=1)
     assert any(e["kind"] == "log" and e["data"]["text"] == "hello" for e in events)
+    time.sleep(0.3)  # let any background start-up messages land first
     t = time.monotonic()
-    assert ctl.events_after(events[-1]["seq"], timeout=0.2) == []
+    assert ctl.events_after(ctl._seq, timeout=0.2) == []
     assert time.monotonic() - t >= 0.15
 
 
@@ -183,3 +184,37 @@ def test_clear_cache_offers_to_close_roblox(ctl, monkeypatch):
     assert state["closed"] == 0
     assert ctl.clear_cache(close_roblox=True) is None
     assert state["closed"] == 1
+
+
+def test_accepting_the_notice_starts_patchwork(tmp_path, monkeypatch):
+    import socket
+    from patchwork import roblox
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("TEMP", raising=False)
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: [])
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    c = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", proxy_mode=f"regular@{port}")
+    try:
+        c.auto_start()  # nothing happens before the notice is accepted
+        assert not c.busy and not c.runner.running
+        c.accept_notice()
+        for _ in range(100):
+            if c.runner.running:
+                break
+            time.sleep(0.1)
+        assert c.runner.running
+    finally:
+        c.shutdown()
+
+
+def test_launch_at_login_setting(ctl, monkeypatch):
+    from patchwork import startup
+    calls = []
+    monkeypatch.setattr(startup, "supported", lambda: True)
+    monkeypatch.setattr(startup, "enable", lambda exe=None: calls.append("on"))
+    monkeypatch.setattr(startup, "disable", lambda: calls.append("off"))
+    ctl.set_setting("launch_at_login", False)
+    ctl.set_setting("launch_at_login", True)
+    assert calls == ["off", "on"] and ctl.snapshot()["settings"]["launch_at_login"] is True

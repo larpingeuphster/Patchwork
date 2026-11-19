@@ -148,12 +148,13 @@
     document.body.classList.toggle("busy", S.busy);
     document.body.classList.toggle("in-rivals", S.running && S.game.in_rivals);
 
-    $("#power-label").textContent = S.busy ? "Working…" : S.running ? "Stop" : "Start";
-    $("#power").setAttribute("aria-label", S.running ? "Stop Patchwork" : "Start Patchwork");
     const pill = $("#status-pill");
-    pill.className = `pill ${S.status.tone}`;
-    pill.title = S.status.text;
-    pill.querySelector("span").textContent = S.status.text;
+    const stopped = !S.running && !S.busy;
+    pill.className = `pill ${S.status.tone}${stopped && S.notice_accepted ? " retry" : ""}`;
+    const text = stopped ? (S.notice_accepted ? "Not running · click to start" : "Waiting for you to accept") : S.status.text;
+    pill.title = text;
+    pill.querySelector("span").textContent = text;
+    $("#login-row").hidden = !S.startup_supported;
 
     $("#version").textContent = `Patchwork v${S.version}`;
     $("#active-count").textContent = `${plural(S.active_count, "swap")} on`;
@@ -534,10 +535,10 @@
   });
   $("#open-configs").addEventListener("click", () => act("open_folder", { which: "configs" }));
   $("#undo-btn").addEventListener("click", () => act("undo"));
-  $("#power").addEventListener("click", async () => {
-    if (!S || S.busy) return;
-    if (S.running) return act("stop");
-    if (!S.active_count) toast("No swaps are switched on yet. Tick a profile under Enabled.", { tone: "warn" });
+  // There's no Start button: Patchwork starts on its own. If starting failed,
+  // clicking the status badge tries again.
+  $("#status-pill").addEventListener("click", async () => {
+    if (!S || S.busy || S.running || !S.notice_accepted) return;
     const r = await act("start");
     if (r && r.confirm === "roblox_open") {
       const choice = await modal({
@@ -553,7 +554,7 @@
   $$("[data-setting]").forEach((el) => el.addEventListener("change", () => act("set_setting", { key: el.dataset.setting, value: el.checked })));
   $("#remove-cert").addEventListener("click", async () => {
     const ok = await confirmBox("Remove certificate",
-      "<p>Stop Patchwork, remove its certificate and setting from every Roblox install, and delete this PC's certificate?</p><p>Your profiles are kept. Patchwork makes a new certificate next time you press Start.</p>", "Remove", "danger");
+      "<p>Stop Patchwork, remove its certificate and setting from every Roblox install, and delete this PC's certificate?</p><p>Your profiles are kept. To swap again, reopen Patchwork or click the status badge; it makes a new certificate.</p>", "Remove", "danger");
     if (ok && (await act("remove_certificate")) !== undefined) toast("Certificate removed");
   });
   $("#open-home").addEventListener("click", () => act("open_folder", { which: "home" }));

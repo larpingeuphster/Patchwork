@@ -35,7 +35,7 @@ jobs:
       - name: Self-check the packaged exe
         shell: pwsh
         run: |
-          $p = Start-Process dist\Patchwork.exe -ArgumentList '--self-check', "$PWD\selfcheck.txt" -Wait -PassThru
+          $p = Start-Process dist\Patchwork.exe -ArgumentList '--self-check', "$PWD\selfcheck.txt" -Verb RunAs -Wait -PassThru
           Get-Content selfcheck.txt
           if ($p.ExitCode -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4

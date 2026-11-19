@@ -55,6 +55,7 @@ class Store:
     warn_id_swaps: bool = True  # explain that ID swaps are visible to Roblox's servers
     rivals_universes: list[int] = field(default_factory=list)  # learned from Roblox's log
     install_roots: list[str] = field(default_factory=list)  # where Roblox was seen running from
+    launch_at_login: bool = True  # start Patchwork when the user signs in to Windows
     warnings: list[str] = field(default_factory=list)
     _undo: list[Snapshot] = field(default_factory=list)
 
@@ -87,13 +88,15 @@ class Store:
                 store.warnings.append(f"settings.json couldn't be read ({exc}); using defaults.")
         store.enabled = [n for n in settings.get("enabled", [DEFAULT_PROFILE]) if n in store.profiles]
         store.editing = settings.get("editing", DEFAULT_PROFILE)
-        store.intercept_hosts = list(settings.get("intercept_hosts") or DEFAULT_INTERCEPT_HOSTS)
+        # Older settings only listed assetdelivery; always include the current defaults.
+        store.intercept_hosts = list(dict.fromkeys(DEFAULT_INTERCEPT_HOSTS + list(settings.get("intercept_hosts") or [])))
         store.processes = list(settings.get("processes") or DEFAULT_PROCESSES)
         store.notice_accepted = bool(settings.get("notice_accepted", False))
         store.restore_on_stop = bool(settings.get("restore_on_stop", True))
         store.warn_id_swaps = bool(settings.get("warn_id_swaps", True))
         store.rivals_universes = [int(u) for u in settings.get("rivals_universes", []) if str(u).isdigit()]
         store.install_roots = [str(r) for r in settings.get("install_roots", []) if isinstance(r, str)]
+        store.launch_at_login = bool(settings.get("launch_at_login", True))
         if not store.profiles:
             store.profiles[DEFAULT_PROFILE] = []
             store.save_profile(DEFAULT_PROFILE)
@@ -146,6 +149,7 @@ class Store:
             "warn_id_swaps": self.warn_id_swaps,
             "rivals_universes": self.rivals_universes,
             "install_roots": self.install_roots,
+            "launch_at_login": self.launch_at_login,
         }
         _atomic_write(self.settings_path, json.dumps(data, indent=2))
 

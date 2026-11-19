@@ -48,7 +48,7 @@ Patchwork is built to keep the risk low:
 - **Account and network traffic is left alone.** Logins, chat and game servers pass through untouched, and Patchwork never uses your account or sends anything to Roblox on its own.
 - **Risky features are left out:** no custom FastFlags (beyond the one certificate setting above), no account tools and no username spoofing.
 - **Link and file swaps don't change what Roblox asks its servers for.** Asset-ID swaps do, and Roblox could see that, so Patchwork reminds you when you add one. You can turn that reminder off on the **Settings** tab.
-- **Stop puts Roblox back to normal.** When you press **Stop**, or close Patchwork while it's running, Patchwork removes its certificate and setting and clears the asset cache. Turn this off on the **Settings** tab if you'd rather keep them between sessions.
+- **Closing Patchwork puts Roblox back to normal.** When you close Patchwork, it removes its certificate and setting and clears the asset cache. Turn this off on the **Settings** tab if you'd rather keep them between sessions.
 
 Two things are up to you:
 
@@ -61,11 +61,14 @@ Only swap in files you made or are allowed to use. Patchwork doesn't come with a
 
 1. Download `Patchwork-v<version>-Windows.exe` (for example `Patchwork-v1.0.0-Windows.exe`) from the [Releases](../../releases) page. Only download it from there: copies from anywhere else could have been changed.
 2. Run it. Windows SmartScreen may warn that the app is unrecognized, because the build isn't code-signed. Some antivirus tools also flag apps that redirect network traffic. The source is published here so you can check exactly what Patchwork does.
-3. The first time you press **Start**, Windows asks for permission to run mitmproxy's redirector. It needs admin rights to capture Roblox's connections.
+3. Patchwork always runs as administrator, because it needs that to capture Roblox's connections, so Windows asks for permission when you open it. When it starts with Windows (on by default, see **Settings**), it runs from Task Scheduler and there's no prompt.
 
 ## Use
 
-Patchwork's window has three tabs across the top: **Replacer**, **Activity** and **Settings**. The **Start** button at the top right starts and stops Patchwork. The badge next to it shows whether you're in RIVALS and swaps are on, paused, or waiting.
+Patchwork's window has three tabs across the top: **Replacer**, **Activity** and **Settings**. There's no Start button: Patchwork starts swapping as soon as it opens, and stops when you close it. The badge at the top right shows whether you're in RIVALS and swaps are on, paused, or waiting.
+
+- **Start with Windows.** Patchwork starts minimised when you sign in to Windows, so swaps work whenever you open Roblox. Turn this off on the **Settings** tab. Opening Patchwork again brings the running window back instead of starting a second copy.
+- **Swaps not showing?** Press **Clear Cache**. It closes Roblox if needed and clears the assets Roblox saved earlier. The next time you open Roblox, it goes through Patchwork.
 
 ### Replacer
 

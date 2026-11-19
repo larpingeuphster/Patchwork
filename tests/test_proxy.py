@@ -200,7 +200,7 @@ def test_remove_and_stats(tmp_path):
         assert u.response is None
     st = addon.stats
     assert (st.lookups, st.assets, st.swapped) == (3, 3, 2)
-    assert st.unknown_paths == {"/v9/weird/<id>"}
+    assert st.unknown_paths == {"assetdelivery.roblox.com/v9/weird/<id>"}
 
 
 def test_tls_hooks_count_trust_and_refusals(tmp_path):
@@ -213,3 +213,12 @@ def test_tls_hooks_count_trust_and_refusals(tmp_path):
     addon.tls_failed_client(ok)
     addon.tls_failed_client(ok)
     assert addon.stats.trusted == 1 and addon.stats.rejected == 2
+
+
+def test_cdn_downloads_pass_through_and_are_counted(tmp_path):
+    addon = SwapAddon(Config(swaps=[Swap("Sky", [100], KIND_ASSET, "900")]), downloads_dir=tmp_path)
+    with taddons.context(addon):
+        f = flow("GET", "/abc123def/texture", host="fts.rbxcdn.com")
+        asyncio.run(addon.request(f))
+        assert f.response is None
+    assert addon.stats.downloads == 1 and addon.stats.lookups == 1

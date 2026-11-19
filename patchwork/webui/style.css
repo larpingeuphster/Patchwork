@@ -139,7 +139,8 @@ body.running .power { background: rgba(167,123,255,.1); border-color: rgba(190,1
 body.busy .power { opacity: .7; animation: none; }
 body.busy .power svg { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.pill { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 99px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,.04); border: 1px solid var(--line); color: var(--text-2); }
+.pill.retry { cursor: pointer; } .pill.retry:hover { border-color: rgba(190,160,255,.5); color: var(--text); }
+.pill { font-family: inherit; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 99px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,.04); border: 1px solid var(--line); color: var(--text-2); }
 .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .pill.on { color: var(--ok); border-color: rgba(124,224,166,.3); } .pill.on i { background: var(--ok); animation: beacon 1.6s infinite; }
 .pill.waiting { color: #c7b0ff; border-color: rgba(167,123,255,.35); } .pill.waiting i { background: var(--purple); animation: blink 1.3s infinite; }

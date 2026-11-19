@@ -99,6 +99,7 @@ class SwapStats:
         self.swapped = 0
         self.paused = 0  # requests seen while not in RIVALS
         self.upstream_failed = 0  # Patchwork couldn't verify Roblox's real server
+        self.downloads = 0  # asset content Roblox downloaded from its CDN hosts
         self._last_upstream_log = 0.0
         self.unknown_paths: set[str] = set()
         self._last_reject_log = 0.0
@@ -155,7 +156,7 @@ class SwapAddon:
                 "Patchwork couldn't make a trusted connection to Roblox's real asset server (%d time(s)), so "
                 "Roblox's requests can't go through. This usually means antivirus \"HTTPS scanning\" or a "
                 "network filter is in the way: turn off HTTPS/web scanning in your antivirus, or add an "
-                "exception for Patchwork, then press Stop and Start.", self.stats.upstream_failed)
+                "exception for Patchwork, then reopen Patchwork.", self.stats.upstream_failed)
 
     def tls_failed_client(self, data) -> None:
         host = _sni(data)
@@ -167,7 +168,7 @@ class SwapAddon:
             self.stats._last_reject_log = now
             log.warning(
                 "Roblox refused Patchwork's certificate for %s (%d time(s) so far), so nothing can be swapped. "
-                "Close Roblox completely, press Start, then open Roblox again. If it keeps happening, Roblox "
+                "Press Clear Cache (it closes Roblox), then open Roblox again. If it keeps happening, Roblox "
                 "isn't using the certificate file Patchwork set up.", host, self.stats.rejected)
 
     def _note_unknown(self, method: str, path: str) -> None:
@@ -175,8 +176,7 @@ class SwapAddon:
         if shape in self.stats.unknown_paths or len(self.stats.unknown_paths) >= 15:
             return
         self.stats.unknown_paths.add(shape)
-        log.info("Roblox sent %s %s to the asset server. Patchwork doesn't handle this kind of request yet.",
-                 method, shape)
+        log.info("Roblox sent %s %s. Patchwork doesn't handle this kind of request yet.", method, shape)
 
     def _ours(self, flow) -> bool:
         return flow.request.pretty_host.lower() in self.hosts
@@ -219,6 +219,8 @@ class SwapAddon:
 
     async def request(self, flow) -> None:
         if not self._ours(flow):
+            # Only Roblox's asset hosts are decrypted, so anything else here is unexpected; say so.
+            self._note_unknown(flow.request.method, f"{flow.request.pretty_host}{flow.request.path}")
             return
         from mitmproxy import http
 
@@ -233,10 +235,16 @@ class SwapAddon:
             return
 
         self.stats.lookups += 1
-        is_batch = req.method == "POST" and rules.is_batch_path(path)
-        is_single = req.method == "GET" and rules.is_single_path(path)
+        host = req.pretty_host.lower()
+        on_lookup_host = host == "assetdelivery.roblox.com" or host not in ("fts.rbxcdn.com", "contentdelivery.roblox.com")
+        is_batch = on_lookup_host and req.method == "POST" and rules.is_batch_path(path)
+        is_single = on_lookup_host and req.method == "GET" and rules.is_single_path(path)
         if not (is_batch or is_single):
-            self._note_unknown(req.method, path)
+            if on_lookup_host:
+                self._note_unknown(req.method, f"{host}{path}")
+            else:
+                self.stats.downloads += 1  # asset content from Roblox's CDN; passed through untouched
+                self._note_unknown(req.method, f"{host}{path}")
             return
 
         if len(self.table) == 0:
@@ -416,6 +424,8 @@ class ProxyRunner:
         m = master.Master(opts)
         m.addons.add(*addons.default_addons())
         m.addons.add(self.addon, _Lifecycle(started.set))
+        # Asset downloads can be large; stream them instead of holding them in memory.
+        m.options.update(stream_large_bodies="4m")
         self._master = m
         self._run_task = asyncio.create_task(m.run())
 

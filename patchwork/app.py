@@ -8,16 +8,58 @@ the default browser instead.
 
 from __future__ import annotations
 
+import http.client
+import json
 import os
 import sys
 import threading
 import webbrowser
 
-from . import __version__, games
+from . import __version__, games, startup
+from .config import app_dir
 from .controller import Controller
 from .server import UiServer
 
 TITLE = f"Patchwork for {games.RIVALS_NAME}"
+
+
+def _instance_file():
+    return app_dir() / "instance.json"
+
+
+def _write_instance(server: UiServer) -> None:
+    try:
+        path = _instance_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"port": server.port, "token": server.token, "pid": os.getpid()}),
+                        encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clear_instance() -> None:
+    try:
+        data = json.loads(_instance_file().read_text(encoding="utf-8"))
+        if data.get("pid") == os.getpid():
+            _instance_file().unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def _show_running_instance() -> bool:
+    """If another Patchwork is running, ask it to show its window. True if it answered."""
+    try:
+        data = json.loads(_instance_file().read_text(encoding="utf-8"))
+        port, token = int(data["port"]), str(data["token"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("POST", "/api/show", body=b"{}", headers={
+            "Host": f"127.0.0.1:{port}", "X-Patchwork-Token": token, "Content-Type": "application/json"})
+        return conn.getresponse().status == 200
+    except OSError:
+        return False
 
 
 def _tk_file_dialog(kind: str, save: bool, default_name: str) -> str | None:
@@ -55,10 +97,19 @@ def main(argv: list[str] | None = None) -> None:
         except Exception:
             pass
 
+    # Only one Patchwork at a time: if one is already running (for example it
+    # started with Windows), bring its window forward and quit.
+    if _show_running_instance():
+        return
+
     # PATCHWORK_PROXY_MODE (e.g. "regular@8080") is for development on non-Windows machines.
     controller = Controller(proxy_mode=os.environ.get("PATCHWORK_PROXY_MODE") or None)
     server = UiServer(controller, port=int(os.environ.get("PATCHWORK_PORT", "0")))
     server.start()
+    _write_instance(server)
+    controller.apply_launch_at_login()
+    # No Start button: start swapping right away (after the first-run notice is accepted).
+    threading.Thread(target=controller.auto_start, daemon=True).start()
 
     use_browser = "--browser" in argv
     webview = None
@@ -80,12 +131,24 @@ def main(argv: list[str] | None = None) -> None:
             pass
         controller.shutdown()
         server.stop()
+        _clear_instance()
         return
 
     window = webview.create_window(
         TITLE, server.url, width=1240, height=820, min_size=(980, 640), background_color="#07070b",
-        text_select=False,
+        text_select=False, minimized=startup.BACKGROUND_FLAG in argv,
     )
+
+    def show() -> None:
+        try:
+            window.restore()
+            window.show()
+            window.on_top = True
+            window.on_top = False
+        except Exception:
+            pass
+
+    server.on_show = show
 
     def native_dialog(kind: str, save: bool, default_name: str) -> str | None:
         types = tuple(f"{label} ({pattern.replace(' ', ';')})" for label, pattern in _dialog_types(kind))
@@ -99,5 +162,5 @@ def main(argv: list[str] | None = None) -> None:
 
     controller.file_dialog = native_dialog
     server.on_quit = window.destroy
-    window.events.closed += lambda: (controller.shutdown(), server.stop())
+    window.events.closed += lambda: (controller.shutdown(), server.stop(), _clear_instance())
     webview.start(private_mode=True)

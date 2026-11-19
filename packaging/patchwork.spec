@@ -27,6 +27,9 @@ exe = EXE(
     name="Patchwork",
     icon=os.path.join(SPECPATH, "patchwork.ico"),
     console=False,
+    # Always run as administrator (needed to capture Roblox's traffic). When Patchwork starts with
+    # Windows it runs from a Task Scheduler task with highest privileges, so there is no UAC prompt.
+    uac_admin=True,
     upx=False,
     version=os.path.join(SPECPATH, "version_info.txt"),
 )
