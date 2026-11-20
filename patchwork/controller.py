@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, capture, games, presets, roblox, startup
+from . import __version__, cache, capture, games, presets, roblox, startup
 from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, app_dir, swap_from_inputs
 from .profiles import Store
 from .rules import Hit
@@ -627,6 +627,70 @@ class Controller:
         self._push_captures()  # its files are put back on the next check
         self.log(f"Deleted captured skin {name}; the original files are put back.")
         self._changed()
+
+    # ----- cache browser ------------------------------------------------------------
+
+    def cache_browse(self) -> dict:
+        """What Roblox has cached, newest first, and which files Patchwork replaces."""
+        rows = self.runner.swapper.browse()
+        replaced = self.captures.targets()
+        manifest = self.runner.swapper.backups.manifest
+        for r in rows:
+            r["group"] = capture.GROUPS.get(r["kind"], r["kind"])
+            r["replaced_by"] = replaced.get(r["hex"], "")
+            rec = manifest.get(r["hex"])
+            if not r["replaced_by"] and rec and rec.get("asset_id"):
+                r["replaced_by"] = f"swap of {rec['asset_id']}"
+        return {"found": self.runner.store.exists(), "rows": rows[:3000], "total": len(rows)}
+
+    def cache_preview(self, hex: str) -> dict:
+        return self.runner.swapper.preview_entry(str(hex))
+
+    def cache_replace(self, hex: str, path: str = "") -> str | None:
+        """Replace one cached file with a file the player picks. Kept until restored."""
+        if not path:
+            path = self.pick_file("replacement")
+            if not path:
+                return None
+        try:
+            data = Path(path).read_bytes()
+        except OSError as exc:
+            raise UserError(f"Couldn't read {path}: {exc}") from exc
+        from .swapper import Unavailable
+        try:
+            body = self.runner.swapper.replacement_for(hex, data)
+            original = self.runner.swapper.read_entry(hex) or b""
+            cache.check_write(original, None, 10, body)
+        except (Unavailable, cache.Refused) as exc:
+            raise UserError(f"Can't use that file: {exc}.") from exc
+        kind = cache.sniff(original)
+        name = f"{Path(path).stem} → {capture.GROUPS.get(kind, kind)} {hex[:6]}"
+        self.captures.drop_target(hex)
+        self.captures.add(capture.Capture(name, [capture.Pair(hex, self.captures.keep_body(body), kind)]))
+        self._push_captures()
+        self.log(f"Replacing a cached {capture.GROUPS.get(kind, kind).lower()} with {Path(path).name}. It shows the "
+                 "next time Roblox loads it (rejoin or re-equip).")
+        self._changed()
+        return name
+
+    def cache_restore(self, hex: str) -> None:
+        names = self.captures.drop_target(str(hex))
+        self._push_captures()
+        if names:
+            self.log("Putting back the original of a cached file (" + ", ".join(names) + ").")
+        self._changed()
+
+    def cache_export(self, hex: str) -> str | None:
+        body = self.runner.swapper.read_entry(str(hex))
+        if body is None:
+            raise UserError("Roblox no longer has that file in its cache.")
+        kind = cache.sniff(body)
+        path = self.pick_file("export", save=True, default_name=f"{hex[:12]}{capture.EXTENSIONS.get(kind, '.bin')}")
+        if not path:
+            return None
+        Path(path).write_bytes(body)
+        self.log(f"Saved a copy of a cached {capture.GROUPS.get(kind, kind).lower()} to {path}.")
+        return path
 
     def cache_report(self) -> str:
         """Write a list of what's in Roblox's cache (kinds, sizes, addresses; nothing personal)."""

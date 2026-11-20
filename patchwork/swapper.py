@@ -352,6 +352,75 @@ class CacheSwapper:
                 out.append(capture.Seen(e.hex, info.kind, info.body_len, capture._label(info.url, info.kind), pv))
             return sorted(out, key=lambda s: (s.kind, -s.size))
 
+    def browse(self) -> list[dict]:
+        """Every cached file Patchwork can show, newest first (for the Cache tab)."""
+        from . import capture
+        with self._lock:
+            if not self.store.exists():
+                return []
+            conn = self._conn or self.store.connect()
+            self._conn = conn
+            out = []
+            for e in self.store.entries(conn):
+                if e.category == cache.PHYSICS_CATEGORY:
+                    continue
+                info = self._info(conn, e)
+                if info.kind not in capture.GROUPS:
+                    continue
+                out.append({"hex": e.hex, "kind": info.kind, "size": info.body_len, "atime": e.atime,
+                            "hits": e.hits})
+            out.sort(key=lambda r: (-r["atime"], r["hex"]))
+            return out
+
+    def preview_entry(self, entry_hex: str) -> dict:
+        """A data: URL to show (images, decoded textures) or play (sounds), if there is one."""
+        import base64
+
+        from . import capture, ktx2
+        body = self.read_entry(entry_hex)
+        if body is None:
+            return {}
+        kind = cache.sniff(body)
+        info: dict = {"kind": kind}
+        if kind in capture.PREVIEWABLE:
+            info["image"] = f"data:{capture.PREVIEWABLE[kind]};base64,{base64.b64encode(body).decode()}"
+            try:
+                from PIL import Image
+                info["detail"] = "%dx%d" % Image.open(io.BytesIO(body)).size
+            except Exception:
+                pass
+        elif kind == "ktx2":
+            try:
+                tex = ktx2.parse(body)
+                info["detail"] = tex.describe()
+                img = ktx2.decode(tex, ktx2.preview_level(tex, 256))
+                info["image"] = "data:image/png;base64," + base64.b64encode(_png(img)).decode()
+            except Exception as exc:
+                info["detail"] = f"can't preview ({exc})"
+        elif kind in capture.AUDIO and len(body) <= 8 << 20:
+            info["audio"] = f"data:{capture.AUDIO[kind]};base64,{base64.b64encode(body).decode()}"
+        return info
+
+    def replacement_for(self, entry_hex: str, data: bytes) -> bytes:
+        """``data`` (a file the player picked) made to fit the cache entry, or Refused/Unavailable."""
+        original = self.read_entry(entry_hex)
+        if original is None:
+            raise Unavailable("Roblox no longer has that file in its cache")
+        kind = cache.sniff(original)
+        if kind == "ktx2":
+            return to_ktx2_like(data, original)
+        if kind in IMAGE_KINDS:
+            if cache.sniff(data) not in IMAGE_KINDS and not data.startswith(b"\xabKTX"):
+                raise Unavailable("pick an image (PNG, JPG or WEBP) to replace an image")
+            if data.startswith(b"\xabKTX"):
+                from . import ktx2
+                return _png(ktx2.decode(ktx2.parse(data)))
+            return fit_image(data, original)
+        new = cache.sniff(data)
+        if kind in ("ogg", "mp3", "wav") and new != kind:
+            raise Unavailable(f"pick a .{kind} sound to replace this one (Roblox keeps the format)")
+        return data
+
     def read_entry(self, entry_hex: str) -> bytes | None:
         with self._lock:
             conn = self._conn or self.store.connect()

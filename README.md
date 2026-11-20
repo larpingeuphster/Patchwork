@@ -98,6 +98,8 @@ Keyboard shortcuts:
 
 The **Activity** tab shows each asset as it's swapped in Roblox's cache, a regular summary (swapped, waiting for Roblox to download, can't be swapped), and any warnings.
 
+**Cache tab, like rbxcache.** Browse everything Roblox has downloaded, most recently used first, with previews (including decoded KTX2 textures) and playable sounds. Click any file to replace it with your own, put the original back, or save a copy. No asset IDs needed, so it works for RIVALS' own textures, sounds and skins too.
+
 **Skins tab: skin capture.** RIVALS' own skins can't be looked up by asset ID without a Roblox login, which Patchwork never uses. Instead you show the skin you have and the skin you want in game, Patchwork notes which cache files Roblox loads for each, and you match them up (mesh to mesh, texture to texture). The captured swap is reapplied whenever Roblox downloads those files again.
 
 **Clear Cache** deletes Roblox's cache but keeps the assets Patchwork has swapped, so your swaps still load instantly afterwards. It works with Roblox open.

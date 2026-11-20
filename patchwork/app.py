@@ -84,7 +84,9 @@ def _tk_file_dialog(kind: str, save: bool, default_name: str) -> str | None:
 def _dialog_types(kind: str) -> list[tuple[str, str]]:
     if kind == "preset":
         return [("Preset (JSON)", "*.json"), ("All files", "*.*")]
-    return [("Roblox-ready files", "*.png *.jpg *.jpeg *.webp *.ogg *.mp3 *.wav *.mesh *.rbxm *.rbxmx"),
+    if kind == "export":
+        return [("All files", "*.*")]
+    return [("Roblox-ready files", "*.png *.jpg *.jpeg *.webp *.ktx2 *.ogg *.mp3 *.wav *.mesh *.rbxm *.rbxmx"),
             ("All files", "*.*")]
 
 

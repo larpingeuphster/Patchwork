@@ -338,3 +338,23 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 .cap-item span { flex: 1; min-width: 0; }
 .cap-item small { color: var(--muted); margin-left: 6px; }
 @media (max-width: 640px) { .cap-row { grid-template-columns: 44px minmax(0,1fr); } .cap-row select { grid-column: 1 / -1; } }
+
+/* ---------- cache browser ---------- */
+.cb-count { color: var(--muted); font-weight: 500; margin-left: 6px; text-transform: none; letter-spacing: 0; }
+.cb-hint { margin: 2px 14px 10px; }
+.cb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; padding: 0 14px 14px; }
+.cb-tile { position: relative; display: grid; grid-template-rows: 96px auto; gap: 6px; padding: 6px; border-radius: 10px; border: 1px solid var(--line); background: var(--field); text-align: left; cursor: pointer; transition: border-color .2s, transform .25s var(--spring); }
+.cb-tile:hover { border-color: var(--line-2); transform: translateY(-2px); }
+.cb-tile.replaced { border-color: rgba(167,123,255,.55); box-shadow: 0 0 0 1px rgba(167,123,255,.25) inset; }
+.cb-thumb { display: grid; place-items: center; border-radius: 7px; overflow: hidden; background: repeating-conic-gradient(rgba(255,255,255,.05) 0 25%, transparent 0 50%) 0 0 / 14px 14px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+.cb-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.cb-meta { font-size: 11px; line-height: 1.35; min-width: 0; }
+.cb-meta b { display: block; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-meta span { color: var(--muted); }
+.cb-badge { position: absolute; top: 9px; right: 9px; padding: 1px 6px; border-radius: 99px; font-size: 10px; font-weight: 700; background: var(--purple-2); color: #fff; }
+.cb-more { display: flex; justify-content: center; padding: 0 0 14px; }
+.cb-detail { display: grid; gap: 10px; }
+.cb-detail .cb-big { display: grid; place-items: center; min-height: 160px; max-height: 300px; border-radius: 10px; overflow: hidden; background: repeating-conic-gradient(rgba(255,255,255,.05) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.cb-detail .cb-big img { width: 100%; height: 280px; object-fit: contain; image-rendering: pixelated; }
+.cb-detail audio { width: 100%; }
+.cb-detail small { color: var(--text-2); }

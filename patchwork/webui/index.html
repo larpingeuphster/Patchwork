@@ -44,6 +44,7 @@
     </div>
     <nav class="tabs" aria-label="Pages">
       <button class="tab active" data-page="replacer">Replacer</button>
+      <button class="tab" data-page="cache">Cache</button>
       <button class="tab" data-page="skins">Skins</button>
       <button class="tab" data-page="activity">Activity<b class="badge" id="activity-badge" hidden>0</b></button>
       <button class="tab" data-page="settings">Settings</button>
@@ -138,6 +139,28 @@
         <button class="btn small" id="open-configs">Open Configs</button>
         <button class="btn small" id="undo-btn">Undo (Ctrl+Z)</button>
       </footer>
+    </section>
+
+    <!-- ===================== CACHE ===================== -->
+    <section class="page" id="page-cache">
+      <div class="card table-card">
+        <div class="table-top">
+          <span class="card-label inline">Roblox's cache <small class="cb-count" id="cb-count"></small></span>
+          <div class="filters" id="cb-filters">
+            <button class="chip active" data-cb="all">All</button>
+            <button class="chip" data-cb="texture">Textures</button>
+            <button class="chip" data-cb="image">Images</button>
+            <button class="chip" data-cb="mesh">Meshes</button>
+            <button class="chip" data-cb="rbxm">Models</button>
+            <button class="chip" data-cb="sound">Sounds</button>
+            <button class="chip" data-cb="replaced">Replaced</button>
+          </div>
+          <button class="btn small" id="cb-refresh">Refresh</button>
+        </div>
+        <p class="hint cb-hint">Everything Roblox has downloaded, most recently used first. Look at something in RIVALS, press Refresh, and it's at the top. Click a file to replace it with your own, put the original back, or save a copy.</p>
+        <div class="cb-grid" id="cb-grid"></div>
+        <div class="cb-more" id="cb-more" hidden><button class="btn small" id="cb-more-btn">Show more</button></div>
+      </div>
     </section>
 
     <!-- ===================== SKINS ===================== -->

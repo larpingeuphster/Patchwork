@@ -102,3 +102,34 @@ def test_cache_report_has_no_tokens(setup, monkeypatch):
     monkeypatch.setattr(ctl, "open_folder", lambda which: None)
     text = open(ctl.cache_report(), encoding="utf-8").read()
     assert "fts.rbxcdn.com/v2/sc0/abc" in text and "secret" not in text and "ktx2" in text
+
+
+def test_cache_browser_replace_and_restore(setup, tmp_path):
+    from PIL import Image
+
+    from patchwork import ktx2
+    store, ctl = setup
+    tex_id, ogg_id = b"\x41" * 16, b"\x42" * 16
+    original_tex = ktx2.make(Image.new("RGBA", (32, 32), (255, 0, 0, 255)), "BC3", levels=6)
+    add(store, tex_id, "https://x/t", original_tex, "")
+    add(store, ogg_id, "https://x/s", b"OggS" + b"\x00" * 40, "")
+    rows = ctl.cache_browse()["rows"]
+    assert {r["kind"] for r in rows} >= {"ktx2", "ogg", "mesh"}
+    p = ctl.cache_preview(tex_id.hex())
+    assert p["image"].startswith("data:image/png") and "BC3 32x32" in p["detail"]
+    assert ctl.cache_preview(ogg_id.hex())["audio"].startswith("data:audio/ogg")
+
+    pic = tmp_path / "blue.png"
+    Image.new("RGBA", (8, 8), (0, 0, 255, 255)).save(pic)
+    assert ctl.cache_replace(tex_id.hex(), str(pic))
+    ctl.runner.swapper.tick(force=True)
+    out = ktx2.parse(body(store, tex_id))
+    assert out.width == 32 and ktx2.decode(out).getpixel((4, 4))[2] > 200
+    assert next(r for r in ctl.cache_browse()["rows"] if r["hex"] == tex_id.hex())["replaced_by"]
+
+    with pytest.raises(UserError, match="ogg"):
+        ctl.cache_replace(ogg_id.hex(), str(pic))  # a picture can't replace a sound
+
+    ctl.cache_restore(tex_id.hex())
+    ctl.runner.swapper.tick(force=True)
+    assert body(store, tex_id) == original_tex

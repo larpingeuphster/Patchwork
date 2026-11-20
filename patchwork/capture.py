@@ -23,10 +23,14 @@ from . import cache
 
 GROUPS = {
     "mesh": "Mesh", "rbxm": "Model / animation", "ktx2": "Texture (KTX2)", "ktx": "Texture (KTX)",
-    "png": "Image (PNG)", "webp": "Image (WEBP)", "jpg": "Image (JPG)", "gif": "Image (GIF)",
+    "png": "Image (PNG)", "jpeg": "Image (JPG)", "webp": "Image (WEBP)", "jpg": "Image (JPG)", "gif": "Image (GIF)",
     "ogg": "Sound (OGG)", "mp3": "Sound (MP3)", "wav": "Sound (WAV)",
 }
-PREVIEWABLE = {"png": "image/png", "webp": "image/webp", "jpg": "image/jpeg", "gif": "image/gif"}
+PREVIEWABLE = {"png": "image/png", "webp": "image/webp", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+               "gif": "image/gif"}
+AUDIO = {"ogg": "audio/ogg", "mp3": "audio/mpeg", "wav": "audio/wav"}
+EXTENSIONS = {"mesh": ".mesh", "rbxm": ".rbxm", "ktx2": ".ktx2", "ktx": ".ktx", "png": ".png", "webp": ".webp",
+              "jpg": ".jpg", "jpeg": ".jpg", "gif": ".gif", "ogg": ".ogg", "mp3": ".mp3", "wav": ".wav"}
 PREVIEW_MAX = 400 << 10
 _NAME = re.compile(r"[^\w .()\-]+")
 
@@ -119,6 +123,32 @@ class Captures:
                 for f in self.bodies.glob("*.body"):
                     if f.stem not in used:
                         f.unlink(missing_ok=True)
+
+    def drop_target(self, entry_hex: str) -> list[str]:
+        """Stop replacing one cache entry. Returns the names of the swaps that changed."""
+        with self._lock:
+            changed = []
+            for c in self.items:
+                if any(p.target == entry_hex for p in c.pairs):
+                    c.pairs = [p for p in c.pairs if p.target != entry_hex]
+                    changed.append(c.name)
+            self.items = [c for c in self.items if c.pairs]
+            self.save()
+        used = {p.source for c in self.items for p in c.pairs}
+        if self.bodies.is_dir():
+            for f in self.bodies.glob("*.body"):
+                if f.stem not in used:
+                    f.unlink(missing_ok=True)
+        return changed
+
+    def targets(self) -> dict[str, str]:
+        """Cache entry (hex) -> name of the enabled swap that replaces it."""
+        out = {}
+        for c in self.items:
+            if c.enabled:
+                for p in c.pairs:
+                    out.setdefault(p.target, c.name)
+        return out
 
     def set_enabled(self, name: str, enabled: bool) -> None:
         with self._lock:

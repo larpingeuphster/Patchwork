@@ -307,6 +307,7 @@
     $$(".page").forEach((p) => p.classList.toggle("active", p.id === `page-${name}`));
     moveTabLine();
     if (name === "skins") loadCapture();
+    if (name === "cache") loadCache();
     if (name === "activity") { unseen = 0; updateBadge(); $("#feed").scrollTop = 0; }
   }
   function moveTabLine() {
@@ -638,6 +639,69 @@
       act("capture_delete", { name: d.dataset.capDelete });
   });
   $("#cache-report").addEventListener("click", async () => { const p = await act("cache_report"); if (p) toast("Cache report saved"); });
+
+
+  // ---------- cache browser ----------
+  const CB = { rows: [], filter: "all", shown: 120, previews: new Map(), loaded: false };
+  const CB_GROUPS = { texture: ["ktx2", "ktx"], image: ["png", "webp", "jpg", "jpeg", "gif"], mesh: ["mesh"], rbxm: ["rbxm"], sound: ["ogg", "mp3", "wav"] };
+  function cbVisible() {
+    return CB.rows.filter((r) => CB.filter === "all" ? true : CB.filter === "replaced" ? !!r.replaced_by : (CB_GROUPS[CB.filter] || []).includes(r.kind));
+  }
+  const cbObserver = new IntersectionObserver((items) => {
+    for (const it of items) if (it.isIntersecting) { cbObserver.unobserve(it.target); cbThumb(it.target); }
+  }, { rootMargin: "200px" });
+  let cbQueue = Promise.resolve();
+  function cbThumb(tile) {
+    const hex = tile.dataset.hex;
+    const put = (p) => { const box = tile.querySelector(".cb-thumb"); if (p && p.image) box.innerHTML = `<img src="${p.image}" alt="">`; };
+    if (CB.previews.has(hex)) return put(CB.previews.get(hex));
+    cbQueue = cbQueue.then(async () => {
+      try { const p = await api("cache_preview", { hex }); CB.previews.set(hex, p); put(p); } catch {}
+    });
+  }
+  function renderCache() {
+    const rows = cbVisible();
+    $("#cb-count").textContent = CB.loaded ? `${rows.length} of ${CB.rows.length} file(s)` : "";
+    const grid = $("#cb-grid");
+    if (!CB.loaded) { grid.innerHTML = `<p class="hint">Loading…</p>`; return; }
+    if (!CB.rows.length) { grid.innerHTML = `<p class="hint">Roblox's cache is empty or wasn't found. Open RIVALS, then press Refresh.</p>`; $("#cb-more").hidden = true; return; }
+    grid.innerHTML = rows.slice(0, CB.shown).map((r) => `<button class="cb-tile${r.replaced_by ? " replaced" : ""}" data-hex="${r.hex}">
+        <div class="cb-thumb">${esc(r.kind.toUpperCase())}</div>
+        <div class="cb-meta"><b>${esc(r.group)}</b><span>${kb(r.size)}</span></div>
+        ${r.replaced_by ? `<span class="cb-badge">Replaced</span>` : ""}</button>`).join("") || `<p class="hint">Nothing of that kind.</p>`;
+    $("#cb-more").hidden = rows.length <= CB.shown;
+    $$(".cb-tile", grid).forEach((t) => cbObserver.observe(t));
+  }
+  async function loadCache() {
+    try { const r = await api("cache_browse"); CB.rows = r.rows; CB.loaded = true; CB.previews.clear(); renderCache(); }
+    catch (e) { CB.loaded = true; CB.rows = []; renderCache(); }
+  }
+  $("#cb-refresh").addEventListener("click", () => { CB.shown = 120; loadCache(); });
+  $("#cb-more-btn").addEventListener("click", () => { CB.shown += 240; renderCache(); });
+  $("#cb-filters").addEventListener("click", (e) => {
+    const c = e.target.closest("[data-cb]");
+    if (!c) return;
+    CB.filter = c.dataset.cb; CB.shown = 120;
+    $$("#cb-filters .chip").forEach((x) => x.classList.toggle("active", x === c));
+    renderCache();
+  });
+  $("#cb-grid").addEventListener("click", async (e) => {
+    const tile = e.target.closest(".cb-tile");
+    if (!tile) return;
+    const row = CB.rows.find((r) => r.hex === tile.dataset.hex);
+    if (!row) return;
+    let p = CB.previews.get(row.hex);
+    if (!p) { try { p = await api("cache_preview", { hex: row.hex }); CB.previews.set(row.hex, p); } catch { p = {}; } }
+    const big = p.image ? `<div class="cb-big"><img src="${p.image}" alt=""></div>` : p.audio ? `<audio controls src="${p.audio}"></audio>` : `<div class="cb-big">${esc(row.kind.toUpperCase())}</div>`;
+    const html = `<div class="cb-detail">${big}<small>${esc(row.group)} · ${kb(row.size)}${p.detail ? " · " + esc(p.detail) : ""}${row.replaced_by ? `<br>Replaced by <b>${esc(row.replaced_by)}</b>` : ""}</small></div>`;
+    const buttons = [{ label: "Close", value: null }, { label: "Save a copy", value: "export" }];
+    if (row.replaced_by && !row.replaced_by.startsWith("swap of")) buttons.push({ label: "Put original back", value: "restore", kind: "danger" });
+    buttons.push({ label: "Replace with file…", value: "replace", kind: "primary" });
+    const choice = await modal({ title: row.group, html, buttons });
+    if (choice === "replace") { const r = await act("cache_replace", { hex: row.hex }); if (r) { toast("Replaced. Rejoin or re-equip to see it."); loadCache(); } }
+    else if (choice === "restore") { await act("cache_restore", { hex: row.hex }); toast("Original goes back within a second"); loadCache(); }
+    else if (choice === "export") { const r = await act("cache_export", { hex: row.hex }); if (r) toast("Saved a copy"); }
+  });
 
   // ---------- keyboard ----------
   document.addEventListener("keydown", (e) => {
