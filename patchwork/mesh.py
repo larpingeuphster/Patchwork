@@ -150,6 +150,27 @@ def parse(data: bytes) -> Mesh:
 
 
 # ---------------------------------------------------------------------------------------------
+# Recognising a mesh by its shape
+
+
+def shape(m: Mesh) -> tuple[int, float, float, float]:
+    """(triangles, width, height, depth): survives Roblox re-encoding a mesh (e.g. as Draco)."""
+    if not m.positions:
+        return (0, 0.0, 0.0, 0.0)
+    xs, ys, zs = zip(*m.positions)
+    return (len(m.faces), max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+
+
+def shape_distance(a, b) -> float:
+    """0 for the same shape; grows with the relative difference in triangle count and size."""
+    if not a or not b or not a[0] or not b[0]:
+        return 1e9
+    faces = abs(a[0] - b[0]) / max(a[0], b[0])
+    size = max(abs(x - y) / max(abs(x), abs(y), 1e-6) for x, y in zip(a[1:], b[1:]))
+    return faces + size
+
+
+# ---------------------------------------------------------------------------------------------
 # Drawing
 
 

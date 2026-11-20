@@ -61,3 +61,41 @@ def test_viewer_data_is_normalised_and_capped():
     pts, faces = torus(40, 30)
     v = mesh.for_viewer(mesh.parse(mesh.make("4.00", pts, faces)), max_faces=500)
     assert len(v["faces"]) == 1500 and max(abs(c) for c in v["positions"]) <= 1.0001
+
+
+def draco_v7(pts, faces):
+    import DracoPy
+    import numpy as np
+    blob = b"\x01\x00\x00\x00" + DracoPy.encode(np.array(pts, dtype=np.float32), np.array(faces, dtype=np.uint32))
+    return b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 2, len(blob)) + blob
+
+
+def test_replacer_finds_a_draco_cached_mesh_by_shape(tmp_path):
+    from patchwork import cache, swapper
+    from patchwork.config import KIND_ASSET, Swap
+    from patchwork.downloads import Downloads
+    from tests.test_cache import make_store
+
+    scythe = torus(30, 12)
+    other = torus(20, 10)
+    scaled = ([(x * 2, y, z) for x, y, z in scythe[0]], scythe[1])  # same triangles, different size
+    fancy = torus(36, 14)
+    downloads = {101: mesh.make("4.00", *scythe), 202: mesh.make("4.00", *fancy)}
+    cached = [draco_v7(*scythe), draco_v7(*other), draco_v7(*scaled)]
+    store = make_store(tmp_path, [(bytes([i + 1]) * 16, cache.wrap(f"https://x/{i}", "roblox-assettypeid: 4\r\n", b), 10)
+                                  for i, b in enumerate(cached)])
+    sw = swapper.CacheSwapper(store, tmp_path / "app", Downloads(tmp_path / "dl"), lambda h: None,
+                              idmap=swapper.IdMap(tmp_path / "app" / "idmap.json", fetch=downloads.__getitem__))
+    swapper.fetch_asset = downloads.__getitem__
+    sw.set_swaps([Swap("Skin", [101], KIND_ASSET, "202")])
+    sw.tick()
+
+    def body(i):
+        conn = store.connect()
+        try:
+            return store.read_body(conn, bytes([i + 1]) * 16)[0]
+        finally:
+            conn.close()
+    assert body(0) == downloads[202]  # the Draco copy of the scythe got the fancy skin
+    assert body(1) == cached[1] and body(2) == cached[2]  # different shape / different size untouched
+    assert sw.state[101] == "swapped"

@@ -45,6 +45,8 @@ RETRY_NETWORK_AFTER = 2 * 60  # couldn't reach Roblox: try again soon
 IMAGE_KINDS = {"png", "jpeg", "gif", "webp"}
 MATCH_MAX = 14.0  # mean channel difference (0-255) of the 16x16 thumbnails for a texture match
 MATCH_MARGIN = 4.0  # ...and how much better than the next best it must be
+MESH_MATCH_MAX = 0.02  # relative difference in triangle count + size for a mesh match
+MESH_MATCH_MARGIN = 0.02
 _ID_IN_URL = re.compile(r"(?:[?&]id=|/assetid/|/asset-id/)(\d+)", re.IGNORECASE)
 
 
@@ -110,6 +112,7 @@ class Fingerprint:
     sig: bytes = b""  # tiny thumbnail, for finding the texture's KTX2 copy by its look
     width: int = 0
     height: int = 0
+    shape: tuple = ()  # (triangles, w, h, d) of a mesh, for finding its re-encoded cached copy
 
 
 class IdMap:
@@ -137,9 +140,10 @@ class IdMap:
         """The asset's fingerprint, or a reason it isn't available."""
         rec = self._data.get(str(asset_id))
         now = time.time()
-        if rec and "md5" in rec and (rec.get("kind") not in IMAGE_KINDS or "sig" in rec or rec.get("nosig")):
+        needs_extra = (rec or {}).get("kind") in IMAGE_KINDS or (rec or {}).get("kind") == "mesh"
+        if rec and "md5" in rec and (not needs_extra or "sig" in rec or "shape" in rec or rec.get("nosig")):
             return Fingerprint(rec["md5"], rec["size"], rec.get("kind", "other"), bytes.fromhex(rec.get("sig", "")),
-                               rec.get("w", 0), rec.get("h", 0))
+                               rec.get("w", 0), rec.get("h", 0), tuple(rec.get("shape", ())))
         if rec and now - rec.get("at", 0) < (RETRY_NETWORK_AFTER if rec.get("transient") else RETRY_REFUSED_AFTER):
             return rec.get("error", "unavailable")
         try:
@@ -159,6 +163,13 @@ class IdMap:
                 img.load()
                 fp.sig, fp.width, fp.height = ktx2.signature(img), img.width, img.height
                 rec.update(sig=fp.sig.hex(), w=fp.width, h=fp.height)
+            except Exception:
+                rec["nosig"] = True
+        elif fp.kind == "mesh":
+            try:
+                from . import mesh
+                fp.shape = mesh.shape(mesh.parse(body))
+                rec["shape"] = list(fp.shape)
             except Exception:
                 rec["nosig"] = True
         self._data[str(asset_id)] = rec
@@ -291,12 +302,14 @@ class CacheSwapper:
         self._body_info: dict[tuple[bytes, int, int], tuple[int, str]] = {}
         self._md5: dict[tuple[bytes, int, int], str] = {}
         self._looks: dict[tuple[bytes, int, int], tuple[bytes, int, int] | str] = {}
+        self._shapes: dict[tuple[bytes, int], tuple | str] = {}
         self._conn = None  # kept open: SQLite's data_version only compares within one connection
         self._replacements: dict[tuple[str, str], bytes] = {}
         self._reported: set[str] = set()
         self._last_unavailable: tuple = ()
         self._described = False
         self._matched_note_done = False
+        self._mesh_note_done = False
         self.stats = {"swapped": 0, "waiting": 0, "unavailable": 0}
         self.state: dict[int, str] = {}  # asset id -> "swapped" / "waiting" / reason
 
@@ -638,6 +651,62 @@ class CacheSwapper:
             log.info("Matched %d texture(s) to Roblox's cached KTX2 copies by how they look.", len(found))
         return {hx: (aid, swap) for hx, (_, aid, swap) in found.items()}
 
+    def _shape(self, conn, entry: cache.Entry) -> tuple | str:
+        key = (entry.id, entry.size)
+        if key not in self._shapes:
+            from . import mesh
+            try:
+                self._shapes[key] = mesh.shape(mesh.parse(self.store.read_body(conn, entry.id)[0]))
+            except Exception as exc:
+                self._shapes[key] = f"unreadable ({exc})"
+        return self._shapes[key]
+
+    def _match_meshes(self, conn, entries: list[cache.Entry], linked: dict, taken: dict) -> dict[str, tuple[int, Swap]]:
+        """Cached meshes with the same shape as a wanted mesh -> (asset id, swap).
+
+        Roblox re-encodes meshes it gives the game (newer ones are Draco-compressed), so the
+        cached bytes never match the mesh anyone can download. Its triangle count and size
+        survive, so those are compared instead; a match must be near-exact and unambiguous.
+        """
+        from . import mesh
+        targets = []
+        seen = {aid for aid, _ in list(linked.values()) + list(taken.values())}
+        for swap in self.swaps:
+            for asset_id in swap.targets:
+                if asset_id in seen:
+                    continue
+                fp = self.idmap.get(asset_id)
+                if isinstance(fp, Fingerprint) and fp.kind == "mesh" and fp.shape:
+                    targets.append((asset_id, swap, fp))
+                    seen.add(asset_id)
+        if not targets:
+            return {}
+        shapes = []
+        for entry in entries:
+            if entry.hex in linked or entry.hex in taken or self._info(conn, entry).kind != "mesh":
+                continue
+            rec = self.backups.manifest.get(entry.hex)
+            if rec and self._entry_md5(conn, entry) == rec.get("written_md5"):
+                continue
+            sh = self._shape(conn, entry)
+            if isinstance(sh, tuple):
+                shapes.append((entry.hex, sh))
+        found: dict[str, tuple[float, int, Swap]] = {}
+        for asset_id, swap, fp in targets:
+            scored = sorted((mesh.shape_distance(fp.shape, sh), hx) for hx, sh in shapes)
+            if not scored:
+                continue
+            best, hx = scored[0]
+            runner_up = scored[1][0] if len(scored) > 1 else 1e9
+            if best > MESH_MATCH_MAX or runner_up - best < MESH_MATCH_MARGIN:
+                continue
+            if hx not in found or best < found[hx][0]:
+                found[hx] = (best, asset_id, swap)
+        if found and not self._mesh_note_done:
+            self._mesh_note_done = True
+            log.info("Matched %d mesh(es) to Roblox's re-encoded cached copies by their shape.", len(found))
+        return {hx: (aid, swap) for hx, (_, aid, swap) in found.items()}
+
     def _wanted(self, linked: set[int]) -> dict[tuple[int, str], tuple[int, Swap]]:
         """(size, md5) of each target's original -> (asset id, swap). Earlier swaps win.
 
@@ -692,7 +761,7 @@ class CacheSwapper:
 
     def _forget(self, entry_id: bytes) -> None:
         """Drop what's remembered about an entry after Patchwork writes to it."""
-        for memo in (self._md5, self._body_info, self._looks):
+        for memo in (self._md5, self._body_info, self._looks, self._shapes):
             for key in [k for k in memo if k[0] == entry_id]:
                 del memo[key]
 
@@ -788,6 +857,7 @@ class CacheSwapper:
                     linked.setdefault(entry.hex, (asset_id, swap))
         wanted = self._wanted({aid for aid, _ in linked.values()})
         textures = self._match_textures(conn, entries, linked)
+        textures.update(self._match_meshes(conn, entries, linked, textures))
         sizes = {size for size, _ in wanted}
         present = {e.hex: e for e in entries}
         active_keys = {swap_key(s) for s in self.swaps}
@@ -943,6 +1013,7 @@ class CacheSwapper:
             self._md5.clear()
             self._body_info.clear()
             self._looks.clear()
+            self._shapes.clear()
             self._described = False
             self._dirty = True
             return len(drop), len(keep), in_use
