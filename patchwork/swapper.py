@@ -233,6 +233,8 @@ class CacheSwapper:
         self.idmap = idmap or IdMap(app_dir / "idmap.json")
         self.backups = Backups(app_dir / "originals")
         self.swaps: list[Swap] = []
+        self.captures: list = []  # capture.Capture, applied as copies of captured cache files
+        self.captured_body: Callable[[str], bytes | None] = lambda md5: None
         self._lock = threading.RLock()
         self._last_version: int | None = None
         self._dirty = True
@@ -255,6 +257,73 @@ class CacheSwapper:
             self._replacements = {k: v for k, v in self._replacements.items()
                                   if any(swap_key(s) == k[0] for s in self.swaps)}
             self._dirty = True
+
+    def set_captures(self, captures: list, body: Callable[[str], bytes | None]) -> None:
+        with self._lock:
+            self.captures = list(captures)
+            self.captured_body = body
+            self._dirty = True
+
+    # --- skin capture ------------------------------------------------------------------------
+
+    def capture_mark(self) -> dict[bytes, tuple[int, int, int]]:
+        """What the cache looks like now, to compare against after showing a skin in game."""
+        with self._lock:
+            if not self.store.exists():
+                return {}
+            conn = self._conn or self.store.connect()
+            self._conn = conn
+            return {e.id: (e.size, e.atime, e.hits) for e in self.store.entries(conn)}
+
+    def capture_seen(self, mark: dict[bytes, tuple[int, int, int]]) -> list:
+        """Entries Roblox added, rewrote or read since ``mark`` (skipping ones holding swaps)."""
+        from . import capture
+        with self._lock:
+            if not self.store.exists():
+                return []
+            conn = self._conn or self.store.connect()
+            self._conn = conn
+            out = []
+            for e in self.store.entries(conn):
+                if mark.get(e.id) == (e.size, e.atime, e.hits) or e.hex in self.backups.manifest:
+                    continue
+                if e.category == cache.PHYSICS_CATEGORY:
+                    continue
+                info = self._info(conn, e)
+                if info.kind not in capture.GROUPS:
+                    continue
+                pv = ""
+                if info.kind in capture.PREVIEWABLE and info.body_len <= capture.PREVIEW_MAX:
+                    try:
+                        pv = capture.preview(info.kind, self.store.read_body(conn, e.id)[0])
+                    except (OSError, KeyError):
+                        pass
+                out.append(capture.Seen(e.hex, info.kind, info.body_len, capture._label(info.url, info.kind), pv))
+            return sorted(out, key=lambda s: (s.kind, -s.size))
+
+    def read_entry(self, entry_hex: str) -> bytes | None:
+        with self._lock:
+            conn = self._conn or self.store.connect()
+            self._conn = conn
+            try:
+                return self.store.read_body(conn, bytes.fromhex(entry_hex))[0]
+            except (OSError, KeyError, ValueError):
+                return None
+
+    def report(self) -> list[str]:
+        """One line per cache entry: kind, size, category and address (without its access token)."""
+        with self._lock:
+            if not self.store.exists():
+                return ["Roblox's cache wasn't found."]
+            conn = self._conn or self.store.connect()
+            self._conn = conn
+            entries = self.store.entries(conn)
+            lines = [f"Patchwork cache report: {len(entries)} entries", "kind\tbody_bytes\tcategory\tstatus\turl"]
+            for e in entries:
+                info = self._info(conn, e)
+                url = (info.url or "").split("?", 1)[0]
+                lines.append(f"{info.kind}\t{info.body_len}\t{e.category}\t{info.status}\t{url}")
+            return lines
 
     # --- helpers ---------------------------------------------------------------------------
 
@@ -454,6 +523,10 @@ class CacheSwapper:
         sizes = {size for size, _ in wanted}
         present = {e.hex: e for e in entries}
         active_keys = {swap_key(s) for s in self.swaps}
+        captured: dict[str, tuple[str, str]] = {}  # entry hex -> (capture key, replacement md5)
+        for cap in self.captures:
+            for pair in cap.pairs:
+                captured.setdefault(pair.target, (cap.key, pair.source))
 
         # Put back entries whose swap is gone (or changed), if Roblox hasn't replaced them since.
         for entry_hex, rec in list(self.backups.manifest.items()):
@@ -461,6 +534,8 @@ class CacheSwapper:
             target_still_wanted = any(rec.get("asset_id") == aid and swap_key(s) == rec.get("swap")
                                       for aid, s in list(wanted.values()) + list(linked.values()))
             if target_still_wanted and rec.get("swap") in active_keys:
+                continue
+            if captured.get(entry_hex, (None,))[0] == rec.get("swap"):
                 continue
             if entry is not None and self._entry_md5(conn, entry) == rec.get("written_md5"):
                 original = self.backups.original(entry_hex)
@@ -476,6 +551,8 @@ class CacheSwapper:
         # Swap entries that hold a wanted original.
         swapped = 0
         for entry in entries:
+            if entry.hex in captured:
+                continue  # handled by _apply_captures
             body_len = self._info(conn, entry).body_len
             rec = self.backups.manifest.get(entry.hex)
             if body_len not in sizes and rec is None and entry.hex not in linked:
@@ -510,8 +587,49 @@ class CacheSwapper:
                 self.on_hit(Hit(asset_id, swap.name, swap.describe()))
             except Exception:
                 pass
+        swapped += self._apply_captures(conn, present, captured)
         self.stats["swapped"] = swapped
         self.stats["waiting"] = sum(1 for v in self.state.values() if v == "waiting")
+
+    def _apply_captures(self, conn, present: dict, captured: dict[str, tuple[str, str]]) -> int:
+        done = 0
+        applied: dict[str, int] = {}
+        for entry_hex, (key, source) in captured.items():
+            entry = present.get(entry_hex)
+            if entry is None:
+                continue  # Roblox hasn't got this file right now; it's swapped when it comes back
+            digest = self._entry_md5(conn, entry)
+            rec = self.backups.manifest.get(entry_hex)
+            if digest is None:
+                continue
+            if digest == source or (rec and digest == rec.get("written_md5") and rec.get("swap") == key):
+                done += 1
+                continue
+            body = self.captured_body(source)
+            name = key.split(":", 1)[1]
+            if body is None:
+                self._note(f"capbody:{source}", f"The captured file for {name} is missing; capture it again.")
+                continue
+            try:
+                original, _ = self.store.read_body(conn, entry.id)
+                self.store.replace_body(conn, entry.id, body)
+                self._forget(entry.id)
+            except cache.Refused as exc:
+                self._note(f"capfail:{entry_hex}:{source}", f"Can't apply {name}: {exc}.")
+                continue
+            except Exception as exc:
+                self._note(f"caperr:{entry_hex}", f"Couldn't write {name} into Roblox's cache: {exc}")
+                continue
+            self.backups.keep(entry_hex, original, 0, body, key)
+            done += 1
+            applied.setdefault(name, 0)
+            applied[name] += 1
+        for name, n in applied.items():
+            try:
+                self.on_hit(Hit(0, name, f"{n} captured file(s)"))
+            except Exception:
+                pass
+        return done
 
     def clear_keeping_swaps(self) -> tuple[int, int, int]:
         """Delete Roblox's cached assets except the ones holding swaps.
@@ -564,6 +682,7 @@ class CacheSwapper:
         """Put every original back (when Patchwork quits). Returns how many entries were restored."""
         with self._lock:
             self.swaps = []
+            self.captures = []
             self._dirty = True
             if not self.store.exists() or not self.backups.manifest:
                 return 0

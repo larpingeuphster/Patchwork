@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, games, presets, roblox, startup
+from . import __version__, capture, games, presets, roblox, startup
 from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, app_dir, swap_from_inputs
 from .profiles import Store
 from .rules import Hit
@@ -74,6 +74,9 @@ class Controller:
             on_log=lambda level, msg: self.log(msg, "warn" if level in ("WARNING", "ERROR", "CRITICAL") else ""),
             cache_dir=cache_dir,
         )
+        self.captures = capture.Captures(self.home)
+        self._cap: dict = {"stage": None, "mark": None, "original": [], "replacement": [], "bodies": {}}
+        self._push_captures()
         self.log(f"Patchwork swaps {games.RIVALS_NAME} assets in Roblox's cache on this PC. It works on its own: add "
                  "swaps, switch a profile on, and play. A swap shows up once Roblox has downloaded that asset and "
                  "loads it again (usually your next match).")
@@ -116,6 +119,9 @@ class Controller:
         self._emit("state")
 
     def _hit(self, hit: Hit) -> None:
+        if hit.asset_id == 0:
+            self.log(f"Applied captured skin {hit.swap_name} in Roblox's cache ({hit.replacement})", "hit")
+            return
         self.log(f"Swapped {hit.asset_id} → {hit.replacement} in Roblox's cache  ({hit.swap_name})", "hit")
 
     # ----- snapshot ---------------------------------------------------------------
@@ -181,6 +187,9 @@ class Controller:
                 "can_undo": bool(store._undo),
                 "cache": {"path": str(self.runner.store.directory), "found": self.runner.store.exists()},
                 "asset_states": {str(k): v for k, v in self.runner.swapper.state.items()},
+                "captures": [{"name": c.name, "enabled": c.enabled, "files": len(c.pairs)}
+                             for c in self.captures.items],
+                "capture_stage": self._cap["stage"],
                 "seq": self._seq,
             }
 
@@ -462,6 +471,7 @@ class Controller:
             self.log(f"Put {restored} original asset(s) back in Roblox's cache.")
         if self.runner.running:
             self.runner.update_config(self.store.to_config())
+            self._push_captures()
         self._changed()
         return restored
 
@@ -525,6 +535,111 @@ class Controller:
         self.log(f"Cleared Roblox's asset cache ({len(removed)} item(s))." if removed
                  else "Roblox's asset cache was already empty.")
         return None
+
+    # ----- skin capture -------------------------------------------------------------
+
+    def _push_captures(self) -> None:
+        self.runner.swapper.set_captures(self.captures.active(), self.captures.body)
+
+    def capture_start(self, which: str, clear: bool = True) -> None:
+        """Start noting which cache files Roblox loads, while the player shows a skin in game."""
+        if which not in ("original", "replacement"):
+            raise UserError("Unknown capture step.")
+        if not self.runner.store.exists():
+            raise UserError("Roblox's cache wasn't found. Open RIVALS first.")
+        if clear:
+            # Swaps are kept; everything else has to be loaded again, so the skin's files show up as new.
+            self.runner.swapper.clear_keeping_swaps()
+        with self._lock:
+            self._cap["mark"] = self.runner.swapper.capture_mark()
+            self._cap["stage"] = which
+            self._cap[which] = []
+        self._changed()
+
+    def capture_stop(self) -> list[dict]:
+        """Stop noting and return the files Roblox loaded meanwhile."""
+        with self._lock:
+            which, mark = self._cap["stage"], self._cap["mark"]
+            if which is None:
+                raise UserError("Nothing is being captured.")
+            self._cap["stage"] = None
+        seen = self.runner.swapper.capture_seen(mark or {})
+        if which == "replacement":
+            # Keep the replacement files now: Roblox may drop them from its cache later.
+            bodies = {}
+            for s in seen:
+                body = self.runner.swapper.read_entry(s.hex)
+                if body is not None:
+                    bodies[s.hex] = body
+            seen = [s for s in seen if s.hex in bodies]
+            self._cap["bodies"] = bodies
+        with self._lock:
+            self._cap[which] = seen
+        self._changed()
+        return self.capture_state()
+
+    def capture_state(self) -> dict:
+        def rows(items):
+            return [{"hex": s.hex, "kind": s.kind, "group": capture.GROUPS.get(s.kind, s.kind), "size": s.size,
+                     "label": s.label, "preview": s.preview} for s in items]
+        with self._lock:
+            return {
+                "stage": self._cap["stage"],
+                "original": rows(self._cap["original"]),
+                "replacement": rows(self._cap["replacement"]),
+                "guess": capture.auto_pairs(self._cap["original"], self._cap["replacement"]),
+            }
+
+    def capture_save(self, name: str, pairs: dict) -> None:
+        """Save a captured swap: each original file (hex) is replaced by a captured replacement file."""
+        with self._lock:
+            original = {s.hex: s for s in self._cap["original"]}
+            replacement = {s.hex: s for s in self._cap["replacement"]}
+            bodies = self._cap["bodies"]
+            saved = []
+            for target, source in (pairs or {}).items():
+                if not source:
+                    continue
+                o, r = original.get(target), replacement.get(source)
+                if o is None or r is None or source not in bodies:
+                    raise UserError("That capture is out of date. Capture both skins again.")
+                if o.kind != r.kind:
+                    raise UserError(f"A {capture.GROUPS.get(o.kind, o.kind)} can only be replaced by the same kind "
+                                    "of file.")
+                saved.append(capture.Pair(target, self.captures.keep_body(bodies[source]), o.kind))
+            if not saved:
+                raise UserError("Pick at least one replacement file.")
+            item = capture.Capture(name, saved)
+            self.captures.add(item)
+            self._cap = {"stage": None, "mark": None, "original": [], "replacement": [], "bodies": {}}
+        self._push_captures()
+        self.log(f"Saved captured skin {item.name} ({len(saved)} file(s)). It applies within a second; rejoin "
+                 "or re-equip to see it.")
+        self._changed()
+
+    def capture_toggle(self, name: str, enabled: bool) -> None:
+        self.captures.set_enabled(name, enabled)
+        self._push_captures()
+        self._changed()
+
+    def capture_delete(self, name: str) -> None:
+        self.captures.remove(name)
+        self._push_captures()  # its files are put back on the next check
+        self.log(f"Deleted captured skin {name}; the original files are put back.")
+        self._changed()
+
+    def cache_report(self) -> str:
+        """Write a list of what's in Roblox's cache (kinds, sizes, addresses; nothing personal)."""
+        lines = self.runner.swapper.report()
+        path = self.home / "patchwork-cache-report.txt"
+        self.home.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.log(f"Saved a cache report to {path}. Send that file to help add texture support.")
+        try:
+            self.open_folder("home")
+        except Exception:
+            pass
+        return str(path)
 
     def clear_downloads(self) -> None:
         shutil.rmtree(self.home / "downloads", ignore_errors=True)

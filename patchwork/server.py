@@ -31,6 +31,8 @@ API_METHODS = {
     "pick_file", "import_preset", "export_preset",
     "start", "stop", "clear_cache", "clear_downloads", "restore_cache",
     "set_setting", "accept_notice", "open_folder",
+    "capture_start", "capture_stop", "capture_state", "capture_save", "capture_toggle", "capture_delete",
+    "cache_report",
 }
 
 _TYPES = {".js": "text/javascript", ".css": "text/css", ".html": "text/html", ".svg": "image/svg+xml",

@@ -316,3 +316,25 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 @keyframes loaded { 0% { box-shadow: 0 0 0 2px var(--purple), 0 0 30px var(--glow); } }
 /* Keep the configuration bar's dropdowns above the cards below it. */
 .card.config { z-index: 5; }
+
+/* ---------- skins ---------- */
+.hint { color: var(--text-2); font-size: 12.5px; }
+.cap-steps { margin: 12px 0 4px; padding-left: 20px; display: grid; gap: 10px; }
+.cap-steps li { line-height: 1.5; }
+.cap-step-btns { display: inline-flex; align-items: center; gap: 10px; margin-left: 10px; vertical-align: middle; }
+.cap-count { color: var(--text-2); font-size: 12px; }
+.btn.recording { background: rgba(255,107,134,.18); border-color: rgba(255,107,134,.6); animation: rec 1.2s ease-in-out infinite; }
+@keyframes rec { 50% { box-shadow: 0 0 14px rgba(255,107,134,.45); } }
+.cap-pairs { display: grid; gap: 6px; margin-top: 12px; }
+.cap-row { display: grid; grid-template-columns: 44px minmax(0,1fr) minmax(0,1fr); gap: 10px; align-items: center; padding: 6px 8px; border-radius: 9px; border: 1px solid var(--line); background: var(--field); }
+.cap-row img, .cap-thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: contain; background: rgba(255,255,255,.04); display: grid; place-items: center; font-size: 10px; color: var(--muted); }
+.cap-row .meta { min-width: 0; }
+.cap-row .meta b { display: block; font-size: 12.5px; }
+.cap-row .meta small { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-row select { width: 100%; height: 30px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card-2); color: var(--text); padding: 0 6px; }
+.cap-name { flex: 1; min-width: 200px; }
+.cap-list { display: grid; gap: 6px; }
+.cap-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--field); }
+.cap-item span { flex: 1; min-width: 0; }
+.cap-item small { color: var(--muted); margin-left: 6px; }
+@media (max-width: 640px) { .cap-row { grid-template-columns: 44px minmax(0,1fr); } .cap-row select { grid-column: 1 / -1; } }

@@ -158,6 +158,7 @@
     $("#tray-row").hidden = !S.tray_available;
 
     $("#version").textContent = `Patchwork v${S.version}`;
+    renderSkins();
     $("#active-count").textContent = `${plural(S.active_count, "swap")} on`;
     $("#configs-path").textContent = `Configs: ${S.paths.configs}`;
     $("#undo-btn").disabled = !S.can_undo;
@@ -305,6 +306,7 @@
     $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.page === name));
     $$(".page").forEach((p) => p.classList.toggle("active", p.id === `page-${name}`));
     moveTabLine();
+    if (name === "skins") loadCapture();
     if (name === "activity") { unseen = 0; updateBadge(); $("#feed").scrollTop = 0; }
   }
   function moveTabLine() {
@@ -563,6 +565,79 @@
   });
   $("#open-home").addEventListener("click", () => act("open_folder", { which: "home" }));
   $("#clear-downloads").addEventListener("click", async () => { if ((await act("clear_downloads")) !== undefined) toast("Downloaded files cleared"); });
+
+
+  // ---------- skins ----------
+  let CAP = { stage: null, original: [], replacement: [], guess: {} };
+  const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+  function thumb(f) { return f.preview ? `<img src="${f.preview}" alt="">` : `<span class="cap-thumb">${esc(f.kind.toUpperCase())}</span>`; }
+  function renderSkins() {
+    if (!S) return;
+    CAP.stage = S.capture_stage;
+    for (const which of ["original", "replacement"]) {
+      const b = $(`#cap-${which}`);
+      const rec = CAP.stage === which;
+      b.textContent = rec ? "Stop" : (CAP[which].length ? "Capture again" : "Start");
+      b.classList.toggle("recording", rec);
+      b.disabled = !!CAP.stage && !rec;
+      $(`#cap-${which}-count`).textContent = rec ? "Watching Roblox's cache…" : (CAP[which].length ? `${CAP[which].length} file(s) captured` : "");
+    }
+    const box = $("#cap-pairs");
+    const ready = CAP.original.length && CAP.replacement.length && !CAP.stage;
+    $("#cap-save-row").hidden = !ready;
+    if (!ready) { box.innerHTML = CAP.original.length && !CAP.stage ? `<p class="hint">Now capture the skin you want instead.</p>` : ""; }
+    else if (!box.dataset.built) {
+      box.innerHTML = CAP.original.map((o) => {
+        const opts = CAP.replacement.filter((r) => r.kind === o.kind);
+        const options = [`<option value="">Keep the original</option>`].concat(opts.map((r, i) =>
+          `<option value="${r.hex}"${CAP.guess[o.hex] === r.hex ? " selected" : ""}>${esc(r.group)} #${i + 1} · ${kb(r.size)}</option>`)).join("");
+        return `<div class="cap-row">${thumb(o)}<div class="meta"><b>${esc(o.group)} · ${kb(o.size)}</b><small>${esc(o.label)}</small></div>
+          <select data-target="${o.hex}"${opts.length ? "" : " disabled"}>${options}</select></div>`;
+      }).join("");
+      box.dataset.built = "1";
+    }
+    const list = $("#cap-list");
+    list.innerHTML = (S.captures || []).length ? S.captures.map((c) =>
+      `<div class="cap-item"><span><b>${esc(c.name)}</b><small>${c.files} file(s)</small></span>
+        <label class="switch"><input type="checkbox" data-cap-toggle="${esc(c.name)}"${c.enabled ? " checked" : ""}><i></i></label>
+        <button class="btn small danger" data-cap-delete="${esc(c.name)}">Delete</button></div>`).join("")
+      : `<p class="hint">None yet. Capture a skin above.</p>`;
+  }
+  async function loadCapture() { try { CAP = await api("capture_state"); $("#cap-pairs").dataset.built = ""; renderSkins(); } catch {} }
+  for (const which of ["original", "replacement"]) {
+    $(`#cap-${which}`).addEventListener("click", async () => {
+      if (CAP.stage === which) {
+        const r = await act("capture_stop");
+        if (r) { CAP = r; $("#cap-pairs").dataset.built = ""; await refresh(); if (!r[which].length) alertBox("Nothing new was loaded", "Roblox didn't load any new files while capturing. Make sure the skin actually appears on screen (equip it or open its preview), or rejoin RIVALS and try again."); }
+        return;
+      }
+      if ((await act("capture_start", { which })) === undefined) return;
+      CAP[which] = []; $("#cap-pairs").dataset.built = "";
+      await refresh();
+      toast("Watching… now show the skin in RIVALS");
+    });
+  }
+  $("#cap-save").addEventListener("click", async () => {
+    const pairs = {};
+    $$("#cap-pairs select").forEach((sel) => { if (sel.value) pairs[sel.dataset.target] = sel.value; });
+    const name = $("#cap-name").value.trim() || "Captured skin";
+    if ((await act("capture_save", { name, pairs })) === undefined) return;
+    CAP = { stage: null, original: [], replacement: [], guess: {} };
+    $("#cap-pairs").dataset.built = ""; $("#cap-name").value = "";
+    await refresh();
+    toast(`Saved ${name}`);
+  });
+  $("#cap-list").addEventListener("change", (e) => {
+    const t = e.target.closest("[data-cap-toggle]");
+    if (t) act("capture_toggle", { name: t.dataset.capToggle, enabled: t.checked });
+  });
+  $("#cap-list").addEventListener("click", async (e) => {
+    const d = e.target.closest("[data-cap-delete]");
+    if (!d) return;
+    if (await confirmBox("Delete captured skin?", `<p>Delete <b>${esc(d.dataset.capDelete)}</b>? The original files are put back.</p>`, "Delete", "danger"))
+      act("capture_delete", { name: d.dataset.capDelete });
+  });
+  $("#cache-report").addEventListener("click", async () => { const p = await act("cache_report"); if (p) toast("Cache report saved"); });
 
   // ---------- keyboard ----------
   document.addEventListener("keydown", (e) => {
