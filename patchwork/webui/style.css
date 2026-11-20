@@ -362,3 +362,14 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 .mesh-view { width: 280px; height: 280px; max-width: 100%; cursor: grab; touch-action: none; }
 .mesh-view:active { cursor: grabbing; }
 .mesh-hint { text-align: center; color: var(--muted); font-size: 11px; margin-top: -4px; }
+
+.cb-icon { display: grid; justify-items: center; gap: 6px; }
+.cb-icon svg { width: 38px; height: 38px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; fill: currentColor; }
+.cb-icon em { font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+.cb-icon-sound { color: #7fd6ff; }
+.cb-icon-model { color: #ffc46b; }
+.cb-icon-mesh { color: var(--purple); }
+.cb-icon-image { color: #ff86b0; }
+.cb-icon-other { color: var(--text-2); }
+.cb-big-icon { min-height: 140px; }
+.cb-big-icon svg { width: 72px; height: 72px; }
