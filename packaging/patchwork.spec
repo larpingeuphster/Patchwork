@@ -11,7 +11,7 @@ a = Analysis(
         (os.path.join(ROOT, "patchwork", "assets"), os.path.join("patchwork", "assets")),
         (os.path.join(ROOT, "patchwork", "webui"), os.path.join("patchwork", "webui")),
     ],
-    hiddenimports=["patchwork.app", "patchwork.selfcheck", "webview.platforms.edgechromium", "pystray._win32", "PIL.DdsImagePlugin", "PIL.PngImagePlugin", "zstandard"],
+    hiddenimports=["patchwork.app", "patchwork.selfcheck", "webview.platforms.edgechromium", "pystray._win32", "PIL.DdsImagePlugin", "PIL.PngImagePlugin", "zstandard", "DracoPy", "numpy"],
     excludes=["webview.platforms.qt", "webview.platforms.gtk", "tkinter.test"],
     noarchive=False,
 )

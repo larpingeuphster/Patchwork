@@ -31,3 +31,8 @@ SOFTWARE.
 ```
 
 rbxcache refuses to swap 3D content. Patchwork allows like-for-like swaps of meshes and models (skins) but, like rbxcache, never removes or blanks 3D objects and never touches collision data.
+
+
+## DracoPy / Draco
+
+Patchwork uses [DracoPy](https://github.com/seung-lab/DracoPy) (Apache License 2.0), which wraps Google's [Draco](https://github.com/google/draco) (Apache License 2.0), to decompress Roblox meshes for previews.

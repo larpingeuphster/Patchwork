@@ -84,7 +84,24 @@ def run(report_path: str) -> int:
                 raise RuntimeError(f"{fmt} round trip changed the picture")
         return "KTX2 BC1/BC3 + zstd"
 
+    def meshes() -> str:
+        import struct
+
+        import DracoPy
+        import numpy as np
+
+        from . import mesh
+        pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        tri = np.array([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=np.uint32)
+        blob = DracoPy.encode(pts, tri)
+        data = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 2, len(blob)) + blob
+        if len(mesh.parse(data).faces) != 4:
+            raise RuntimeError("Draco mesh decoded wrong")
+        mesh.render(mesh.parse(data), 32)
+        return "Draco decode + render"
+
     check("cache engine", cache_engine)
+    check("meshes", meshes)
     check("textures", textures)
     check("interface", ui)
     check("native window", window)

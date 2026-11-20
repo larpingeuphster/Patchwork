@@ -39,9 +39,16 @@ def test_chunked_mesh_and_draco():
     core = struct.pack("<I", len(pts)) + verts + struct.pack("<I", len(faces)) + b"".join(struct.pack("<3I", *f) for f in faces)
     data = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 1, len(core)) + core
     assert len(mesh.parse(data).faces) == len(faces)
-    draco = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 2, 4) + b"\0" * 4
-    with pytest.raises(mesh.MeshError, match="Draco"):
-        mesh.parse(draco)
+    import DracoPy
+    import numpy as np
+    blob = b"\x01\x00\x00\x00" + DracoPy.encode(np.array(pts, dtype=np.float32), np.array(faces, dtype=np.uint32))
+    draco = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 2, len(blob)) + blob
+    m = mesh.parse(draco)
+    assert len(m.faces) == len(faces) and len(m.positions) >= 3
+    assert mesh.render(m, 64).startswith(b"\x89PNG")
+    junk = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 2, 4) + b"\0" * 4
+    with pytest.raises(mesh.MeshError, match="recognise"):
+        mesh.parse(junk)
 
 
 def test_text_mesh():

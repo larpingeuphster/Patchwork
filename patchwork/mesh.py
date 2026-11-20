@@ -1,8 +1,8 @@
 """Read Roblox mesh files and draw them, for the Cache tab's 3D previews.
 
 Supports the text format (1.00/1.01), the binary formats 2.00-5.00 and the
-chunked 6.00/7.00 format with an uncompressed COREMESH chunk. Only the first
-(most detailed) level of detail is used. Draco-compressed meshes can't be read.
+chunked 6.00/7.00 format, including Draco-compressed COREMESH chunks (decoded with
+DracoPy, Google's Draco library). Only the first (most detailed) level of detail is used.
 """
 
 from __future__ import annotations
@@ -51,6 +51,25 @@ def _read_faces(data: bytes, off: int, count: int, nverts: int) -> list[tuple[in
         if a < nverts and b < nverts and c < nverts:
             out.append((a, b, c))
     return out
+
+
+def _draco(chunk: bytes) -> tuple[list, list]:
+    """A Draco-compressed COREMESH (Roblox's newer meshes): positions and triangles."""
+    at = chunk.find(b"DRACO")
+    if at < 0:
+        raise MeshError("this mesh is compressed in a way Patchwork doesn't recognise")
+    try:
+        import DracoPy
+    except ImportError as exc:
+        raise MeshError("this mesh is compressed (Draco) and the decoder isn't in this build") from exc
+    try:
+        decoded = DracoPy.decode(bytes(chunk[at:]))
+    except Exception as exc:
+        raise MeshError(f"couldn't decompress this mesh ({exc})") from exc
+    positions = [tuple(map(float, p)) for p in decoded.points]
+    faces_arr = getattr(decoded, "faces", None)
+    faces = [] if faces_arr is None else [tuple(int(i) for i in f) for f in faces_arr]
+    return positions, faces
 
 
 def parse(data: bytes) -> Mesh:
@@ -108,7 +127,9 @@ def parse(data: bytes) -> Mesh:
             start = off + 16
             if kind == "COREMESH":
                 if chunk_version != 1:
-                    raise MeshError("this mesh is compressed (Draco), which Patchwork can't preview")
+                    positions, faces = _draco(data[start:start + size])
+                    off = start + size
+                    continue
                 nverts = struct.unpack_from("<I", data, start)[0]
                 positions = _read_verts(data, start + 4, nverts, 40)
                 foff = start + 4 + nverts * 40
