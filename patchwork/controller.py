@@ -646,6 +646,9 @@ class Controller:
     def cache_preview(self, hex: str) -> dict:
         return self.runner.swapper.preview_entry(str(hex))
 
+    def cache_mesh(self, hex: str) -> dict:
+        return self.runner.swapper.mesh_entry(str(hex))
+
     def cache_replace(self, hex: str, path: str = "") -> str | None:
         """Replace one cached file with a file the player picks. Kept until restored."""
         if not path:

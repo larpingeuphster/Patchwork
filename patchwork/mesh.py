@@ -1,0 +1,210 @@
+"""Read Roblox mesh files and draw them, for the Cache tab's 3D previews.
+
+Supports the text format (1.00/1.01), the binary formats 2.00-5.00 and the
+chunked 6.00/7.00 format with an uncompressed COREMESH chunk. Only the first
+(most detailed) level of detail is used. Draco-compressed meshes can't be read.
+"""
+
+from __future__ import annotations
+
+import io
+import math
+import re
+import struct
+from dataclasses import dataclass
+
+
+class MeshError(ValueError):
+    pass
+
+
+@dataclass
+class Mesh:
+    version: str
+    positions: list[tuple[float, float, float]]
+    faces: list[tuple[int, int, int]]
+
+    def describe(self) -> str:
+        return f"mesh {self.version}, {len(self.positions)} vertices, {len(self.faces)} triangles"
+
+
+def _lod_end(data: bytes, lod_offset: int, num_lods: int, num_faces: int) -> int:
+    if num_lods >= 2 and lod_offset + 8 <= len(data):
+        _first, second = struct.unpack_from("<2I", data, lod_offset)
+        if 0 < second <= num_faces:
+            return second
+    return num_faces
+
+
+def _read_verts(data: bytes, off: int, count: int, size: int) -> list[tuple[float, float, float]]:
+    if off + count * size > len(data):
+        raise MeshError("truncated vertex data")
+    return [struct.unpack_from("<3f", data, off + i * size) for i in range(count)]
+
+
+def _read_faces(data: bytes, off: int, count: int, nverts: int) -> list[tuple[int, int, int]]:
+    if off + count * 12 > len(data):
+        raise MeshError("truncated face data")
+    out = []
+    for i in range(count):
+        a, b, c = struct.unpack_from("<3I", data, off + i * 12)
+        if a < nverts and b < nverts and c < nverts:
+            out.append((a, b, c))
+    return out
+
+
+def parse(data: bytes) -> Mesh:
+    if not data.startswith(b"version "):
+        raise MeshError("not a Roblox mesh")
+    nl = data.find(b"\n")
+    version = data[8:nl].strip().decode("ascii", "replace")
+    body = nl + 1
+    major = version.split(".")[0]
+
+    if major == "1":
+        text = data[body:].decode("ascii", "replace")
+        lines = text.splitlines()
+        nums = re.findall(r"\[([^\]]*)\]", lines[1] if len(lines) > 1 else "")
+        positions = []
+        scale = 0.5 if version == "1.00" else 1.0
+        for i in range(0, len(nums) - 2, 3):
+            x, y, z = (float(v) * scale for v in nums[i].split(","))
+            positions.append((x, y, z))
+        faces = [(i, i + 1, i + 2) for i in range(0, len(positions) - 2, 3)]
+        return Mesh(version, positions, faces)
+
+    if major in ("2", "3"):
+        header_size, vsize, _fsize = struct.unpack_from("<HBB", data, body)
+        if major == "2":
+            nverts, nfaces = struct.unpack_from("<2I", data, body + 4)
+            num_lods = 0
+        else:
+            _lod_size, num_lods, nverts, nfaces = struct.unpack_from("<2H2I", data, body + 4)
+        off = body + header_size
+        positions = _read_verts(data, off, nverts, vsize)
+        off += nverts * vsize
+        end = _lod_end(data, off + nfaces * 12, num_lods, nfaces)
+        return Mesh(version, positions, _read_faces(data, off, end, nverts))
+
+    if major in ("4", "5"):
+        header_size, _lod_type, nverts, nfaces, num_lods, num_bones = struct.unpack_from("<2H2I2H", data, body)
+        off = body + header_size
+        positions = _read_verts(data, off, nverts, 40)
+        off += nverts * 40
+        if num_bones:
+            off += nverts * 8  # skinning envelopes
+        end = _lod_end(data, off + nfaces * 12, num_lods, nfaces)
+        return Mesh(version, positions, _read_faces(data, off, end, nverts))
+
+    if major in ("6", "7"):
+        off = body
+        positions: list = []
+        faces: list = []
+        num_faces = 0
+        lod_end = None
+        while off + 16 <= len(data):
+            kind = data[off:off + 8].rstrip(b"\0").decode("ascii", "replace")
+            chunk_version, size = struct.unpack_from("<2I", data, off + 8)
+            start = off + 16
+            if kind == "COREMESH":
+                if chunk_version != 1:
+                    raise MeshError("this mesh is compressed (Draco), which Patchwork can't preview")
+                nverts = struct.unpack_from("<I", data, start)[0]
+                positions = _read_verts(data, start + 4, nverts, 40)
+                foff = start + 4 + nverts * 40
+                num_faces = struct.unpack_from("<I", data, foff)[0]
+                faces = _read_faces(data, foff + 4, num_faces, nverts)
+            elif kind == "LODS" and size >= 7:
+                _t, _hq, num_lods = struct.unpack_from("<HBI", data, start)
+                if num_lods >= 2:
+                    lod_end = struct.unpack_from("<I", data, start + 7 + 4)[0]
+            off = start + size
+        if not positions:
+            raise MeshError("no mesh data found")
+        if lod_end and 0 < lod_end <= len(faces):
+            faces = faces[:lod_end]
+        return Mesh(version, positions, faces)
+
+    raise MeshError(f"mesh version {version} isn't supported")
+
+
+# ---------------------------------------------------------------------------------------------
+# Drawing
+
+
+def _normalised(mesh: Mesh) -> list[tuple[float, float, float]]:
+    xs, ys, zs = zip(*mesh.positions) if mesh.positions else ((0,), (0,), (0,))
+    cx, cy, cz = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2, (max(zs) + min(zs)) / 2
+    r = max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)) / 2 or 1.0
+    return [((x - cx) / r, (y - cy) / r, (z - cz) / r) for x, y, z in mesh.positions]
+
+
+def decimate(mesh: Mesh, max_faces: int) -> list[tuple[int, int, int]]:
+    if len(mesh.faces) <= max_faces:
+        return mesh.faces
+    step = len(mesh.faces) / max_faces
+    return [mesh.faces[int(i * step)] for i in range(max_faces)]
+
+
+def render(mesh: Mesh, size: int = 192, yaw: float = 35.0, pitch: float = 20.0, max_faces: int = 12000) -> bytes:
+    """A PNG of the mesh, lit from the viewer's side, on a transparent background."""
+    from PIL import Image, ImageDraw
+    ss = 2
+    w = size * ss
+    pts = _normalised(mesh)
+    cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+    cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
+    view = []
+    for x, y, z in pts:
+        x1, z1 = x * cy + z * sy, -x * sy + z * cy
+        y2, z2 = y * cp - z1 * sp, y * sp + z1 * cp
+        view.append((x1, y2, z2))
+    scale = w * 0.42
+    proj = [(w / 2 + x * scale, w / 2 - y * scale) for x, y, _ in view]
+    light = (0.35, 0.55, 0.76)
+    tris = []
+    for a, b, c in decimate(mesh, max_faces):
+        (ax, ay, az), (bx, by, bz), (cx_, cy_, cz) = view[a], view[b], view[c]
+        ux, uy, uz = bx - ax, by - ay, bz - az
+        vx, vy, vz = cx_ - ax, cy_ - ay, cz - az
+        nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        ln = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+        nx, ny, nz = nx / ln, ny / ln, nz / ln
+        if nz > 0:  # facing away from the camera (Roblox winds faces counter-clockwise)
+            nx, ny, nz = -nx, -ny, -nz
+        shade = 0.25 + 0.75 * max(0.0, -(nx * light[0] + ny * light[1] - nz * light[2]))
+        tris.append(((az + bz + cz) / 3, shade, (proj[a], proj[b], proj[c])))
+    tris.sort(key=lambda t: t[0], reverse=True)  # far first (larger z is farther away)
+    img = Image.new("RGBA", (w, w), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    for _, shade, poly in tris:
+        col = (int(150 + 60 * shade), int(110 + 90 * shade), int(200 + 55 * shade), 255)
+        col = tuple(min(255, int(c * (0.45 + 0.55 * shade))) for c in col[:3]) + (255,)
+        draw.polygon(poly, fill=col)
+    img = img.resize((size, size), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def for_viewer(mesh: Mesh, max_faces: int = 15000) -> dict:
+    """Positions (normalised to -1..1) and triangles for the interactive viewer."""
+    faces = decimate(mesh, max_faces)
+    used = sorted({i for f in faces for i in f})
+    remap = {old: new for new, old in enumerate(used)}
+    pts = _normalised(mesh)
+    flat = [round(c, 4) for i in used for c in pts[i]]
+    return {"positions": flat, "faces": [remap[i] for f in faces for i in f]}
+
+
+def make(version: str = "4.00", positions=None, faces=None) -> bytes:
+    """A small mesh file in binary format 2.00 or 4.00 (for tests)."""
+    positions = positions or [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    faces = faces or [(0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)]
+    verts = b"".join(struct.pack("<3f3f2f4b4B", *p, 0, 1, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255) for p in positions)
+    tris = b"".join(struct.pack("<3I", *f) for f in faces)
+    if version.startswith("2"):
+        return b"version 2.00\n" + struct.pack("<HBB2I", 12, 40, 12, len(positions), len(faces)) + verts + tris
+    header = struct.pack("<2H2I2HI H2B", 24, 0, len(positions), len(faces), 2, 0, 0, 0, 0, 0)
+    lods = struct.pack("<2I", 0, len(faces))
+    return f"version {version}\n".encode() + header + verts + tris + lods

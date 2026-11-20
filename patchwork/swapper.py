@@ -397,9 +397,29 @@ class CacheSwapper:
                 info["image"] = "data:image/png;base64," + base64.b64encode(_png(img)).decode()
             except Exception as exc:
                 info["detail"] = f"can't preview ({exc})"
+        elif kind == "mesh":
+            from . import mesh
+            try:
+                m = mesh.parse(body)
+                info["detail"] = m.describe()
+                info["image"] = "data:image/png;base64," + base64.b64encode(mesh.render(m, 160)).decode()
+                info["mesh"] = True
+            except Exception as exc:
+                info["detail"] = f"can't preview ({exc})"
         elif kind in capture.AUDIO and len(body) <= 8 << 20:
             info["audio"] = f"data:{capture.AUDIO[kind]};base64,{base64.b64encode(body).decode()}"
         return info
+
+    def mesh_entry(self, entry_hex: str) -> dict:
+        """A cached mesh's shape for the interactive 3D viewer."""
+        from . import mesh
+        body = self.read_entry(entry_hex)
+        if body is None:
+            return {}
+        try:
+            return mesh.for_viewer(mesh.parse(body))
+        except mesh.MeshError as exc:
+            return {"error": str(exc)}
 
     def replacement_for(self, entry_hex: str, data: bytes) -> bytes:
         """``data`` (a file the player picked) made to fit the cache entry, or Refused/Unavailable."""

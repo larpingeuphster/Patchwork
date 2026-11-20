@@ -692,16 +692,72 @@
     if (!row) return;
     let p = CB.previews.get(row.hex);
     if (!p) { try { p = await api("cache_preview", { hex: row.hex }); CB.previews.set(row.hex, p); } catch { p = {}; } }
-    const big = p.image ? `<div class="cb-big"><img src="${p.image}" alt=""></div>` : p.audio ? `<audio controls src="${p.audio}"></audio>` : `<div class="cb-big">${esc(row.kind.toUpperCase())}</div>`;
+    const big = p.mesh ? `<div class="cb-big"><canvas class="mesh-view" width="560" height="560" title="Drag to turn it"></canvas></div><small class="mesh-hint">Drag to turn it</small>`
+      : p.image ? `<div class="cb-big"><img src="${p.image}" alt=""></div>` : p.audio ? `<audio controls src="${p.audio}"></audio>` : `<div class="cb-big">${esc(row.kind.toUpperCase())}</div>`;
     const html = `<div class="cb-detail">${big}<small>${esc(row.group)} · ${kb(row.size)}${p.detail ? " · " + esc(p.detail) : ""}${row.replaced_by ? `<br>Replaced by <b>${esc(row.replaced_by)}</b>` : ""}</small></div>`;
     const buttons = [{ label: "Close", value: null }, { label: "Save a copy", value: "export" }];
     if (row.replaced_by && !row.replaced_by.startsWith("swap of")) buttons.push({ label: "Put original back", value: "restore", kind: "danger" });
     buttons.push({ label: "Replace with file…", value: "replace", kind: "primary" });
-    const choice = await modal({ title: row.group, html, buttons });
+    const shown = modal({ title: row.group, html, buttons });
+    if (p.mesh) api("cache_mesh", { hex: row.hex }).then((m) => { const c = $(".mesh-view"); if (c && m && m.positions) meshViewer(c, m); }).catch(() => {});
+    const choice = await shown;
     if (choice === "replace") { const r = await act("cache_replace", { hex: row.hex }); if (r) { toast("Replaced. Rejoin or re-equip to see it."); loadCache(); } }
     else if (choice === "restore") { await act("cache_restore", { hex: row.hex }); toast("Original goes back within a second"); loadCache(); }
     else if (choice === "export") { const r = await act("cache_export", { hex: row.hex }); if (r) toast("Saved a copy"); }
   });
+
+
+  // A small 3D viewer for cached meshes: flat-shaded triangles, drawn far to near; drag to turn.
+  function meshViewer(canvas, m) {
+    const ctx = canvas.getContext("2d");
+    const P = m.positions, F = m.faces, n = F.length / 3;
+    let yaw = 0.6, pitch = 0.35, drag = null;
+    const order = new Array(n);
+    const depth = new Float32Array(n), shade = new Float32Array(n);
+    const vx = new Float32Array(P.length / 3), vy = new Float32Array(P.length / 3), vz = new Float32Array(P.length / 3);
+    function draw() {
+      const W = canvas.width, S = W * 0.42;
+      const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+      for (let i = 0; i < vx.length; i++) {
+        const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+        const x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
+        vx[i] = x1; vy[i] = y * cp - z1 * sp; vz[i] = y * sp + z1 * cp;
+      }
+      for (let t = 0; t < n; t++) {
+        const a = F[t * 3], b = F[t * 3 + 1], c = F[t * 3 + 2];
+        const ux = vx[b] - vx[a], uy = vy[b] - vy[a], uz = vz[b] - vz[a];
+        const wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
+        let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+        const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+        if (nz > 0) { nx = -nx; ny = -ny; nz = -nz; }
+        shade[t] = 0.25 + 0.75 * Math.max(0, -(nx * 0.35 + ny * 0.55 - nz * 0.76));
+        depth[t] = vz[a] + vz[b] + vz[c];
+        order[t] = t;
+      }
+      order.sort((p, q) => depth[q] - depth[p]);
+      ctx.clearRect(0, 0, W, W);
+      for (const t of order) {
+        const a = F[t * 3], b = F[t * 3 + 1], c = F[t * 3 + 2], k = 0.45 + 0.55 * shade[t];
+        ctx.fillStyle = `rgb(${Math.min(255, (150 + 60 * shade[t]) * k) | 0},${Math.min(255, (110 + 90 * shade[t]) * k) | 0},${Math.min(255, (200 + 55 * shade[t]) * k) | 0})`;
+        ctx.beginPath();
+        ctx.moveTo(W / 2 + vx[a] * S, W / 2 - vy[a] * S);
+        ctx.lineTo(W / 2 + vx[b] * S, W / 2 - vy[b] * S);
+        ctx.lineTo(W / 2 + vx[c] * S, W / 2 - vy[c] * S);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+    let queued = false;
+    const redraw = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } };
+    canvas.addEventListener("pointerdown", (e) => { drag = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      yaw += (e.clientX - drag[0]) * 0.01;
+      pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag[1]) * 0.01));
+      drag = [e.clientX, e.clientY]; redraw();
+    });
+    canvas.addEventListener("pointerup", () => { drag = null; });
+    draw();
+  }
 
   // ---------- keyboard ----------
   document.addEventListener("keydown", (e) => {

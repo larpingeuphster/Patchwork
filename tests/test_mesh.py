@@ -1,0 +1,56 @@
+import math
+import struct
+
+import pytest
+
+from patchwork import mesh
+
+
+def torus(rings=24, sides=12):
+    pts, faces = [], []
+    for i in range(rings):
+        for j in range(sides):
+            u, v = 2 * math.pi * i / rings, 2 * math.pi * j / sides
+            pts.append(((1 + 0.35 * math.cos(v)) * math.cos(u), 0.35 * math.sin(v), (1 + 0.35 * math.cos(v)) * math.sin(u)))
+    for i in range(rings):
+        for j in range(sides):
+            a, b = i * sides + j, ((i + 1) % rings) * sides + j
+            c, d = ((i + 1) % rings) * sides + (j + 1) % sides, i * sides + (j + 1) % sides
+            faces += [(a, b, c), (a, c, d)]
+    return pts, faces
+
+
+@pytest.mark.parametrize("version", ["2.00", "4.00", "5.00"])
+def test_binary_meshes(version):
+    pts, faces = torus()
+    data = mesh.make("4.00" if version == "5.00" else version, pts, faces)
+    if version == "5.00":  # 5.00 = 4.00 header plus two FACS fields
+        body = data[len(b"version 4.00\n"):]
+        header = struct.pack("<H", 32) + body[2:24] + struct.pack("<2I", 0, 0)
+        data = b"version 5.00\n" + header + body[24:]
+    m = mesh.parse(data)
+    assert len(m.positions) == len(pts) and len(m.faces) == len(faces)
+    assert mesh.render(m, 64).startswith(b"\x89PNG")
+
+
+def test_chunked_mesh_and_draco():
+    pts, faces = torus(8, 6)
+    verts = b"".join(struct.pack("<3f3f2f4b4B", *p, 0, 1, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255) for p in pts)
+    core = struct.pack("<I", len(pts)) + verts + struct.pack("<I", len(faces)) + b"".join(struct.pack("<3I", *f) for f in faces)
+    data = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 1, len(core)) + core
+    assert len(mesh.parse(data).faces) == len(faces)
+    draco = b"version 7.00\n" + b"COREMESH" + struct.pack("<2I", 2, 4) + b"\0" * 4
+    with pytest.raises(mesh.MeshError, match="Draco"):
+        mesh.parse(draco)
+
+
+def test_text_mesh():
+    data = b"version 1.01\n1\n[0,0,0][0,1,0][0,0,0][1,0,0][0,1,0][1,0,0][0,1,0][0,1,0][0,1,0]"
+    m = mesh.parse(data)
+    assert len(m.positions) == 3 and m.faces == [(0, 1, 2)]
+
+
+def test_viewer_data_is_normalised_and_capped():
+    pts, faces = torus(40, 30)
+    v = mesh.for_viewer(mesh.parse(mesh.make("4.00", pts, faces)), max_faces=500)
+    assert len(v["faces"]) == 1500 and max(abs(c) for c in v["positions"]) <= 1.0001
