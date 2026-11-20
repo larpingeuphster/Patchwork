@@ -150,6 +150,92 @@ def parse(data: bytes) -> Mesh:
 
 
 # ---------------------------------------------------------------------------------------------
+# Wavefront OBJ (what skin makers export from Blender) -> Roblox mesh
+
+
+def is_obj(data: bytes) -> bool:
+    head = data[:4096].decode("utf-8", "replace")
+    return any(line.startswith("v ") for line in head.splitlines()) and not data.startswith(b"version ")
+
+
+def from_obj(data: bytes) -> bytes:
+    """Convert an OBJ model to a Roblox mesh (binary 2.00: position, normal, UV per vertex).
+
+    Polygons are split into triangles; missing normals are computed. Refuses models that
+    are empty or flat, so a swap can't make a 3D object disappear.
+    """
+    vs: list[tuple[float, float, float]] = []
+    vts: list[tuple[float, float]] = []
+    vns: list[tuple[float, float, float]] = []
+    corners: dict[tuple[int, int, int], int] = {}
+    out_v: list[tuple] = []
+    faces: list[tuple[int, int, int]] = []
+
+    def index(token: str) -> int:
+        parts = (token.split("/") + ["", ""])[:3]
+        vi = int(parts[0])
+        ti = int(parts[1]) if parts[1] else 0
+        ni = int(parts[2]) if parts[2] else 0
+        vi = vi - 1 if vi > 0 else len(vs) + vi
+        ti = (ti - 1 if ti > 0 else len(vts) + ti) if ti else -1
+        ni = (ni - 1 if ni > 0 else len(vns) + ni) if ni else -1
+        key = (vi, ti, ni)
+        if key not in corners:
+            pos = vs[vi]
+            uv = vts[ti] if 0 <= ti < len(vts) else (0.0, 0.0)
+            nrm = vns[ni] if 0 <= ni < len(vns) else None
+            corners[key] = len(out_v)
+            out_v.append((pos, nrm, uv))
+        return corners[key]
+
+    for raw in data.decode("utf-8", "replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        tag, _, rest = line.partition(" ")
+        nums = rest.split()
+        try:
+            if tag == "v":
+                vs.append((float(nums[0]), float(nums[1]), float(nums[2])))
+            elif tag == "vt":
+                vts.append((float(nums[0]), float(nums[1]) if len(nums) > 1 else 0.0))
+            elif tag == "vn":
+                vns.append((float(nums[0]), float(nums[1]), float(nums[2])))
+            elif tag == "f" and len(nums) >= 3:
+                ids = [index(t) for t in nums]
+                for k in range(1, len(ids) - 1):
+                    faces.append((ids[0], ids[k], ids[k + 1]))
+        except (ValueError, IndexError) as exc:
+            raise MeshError(f"the OBJ file has a line Patchwork can't read: {line[:60]!r}") from exc
+
+    if len(faces) < 4:
+        raise MeshError("the OBJ model is empty")
+    xs, ys, zs = zip(*(v[0] for v in out_v))
+    ext = (max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+    if min(ext) <= max(ext) * 0.005:
+        raise MeshError("the OBJ model is flat, which could make the object vanish from some angles")
+
+    # Fill in normals the file didn't give: average of the faces around each vertex.
+    acc = [[0.0, 0.0, 0.0] for _ in out_v]
+    for a, b, c in faces:
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = out_v[a][0], out_v[b][0], out_v[c][0]
+        ux, uy, uz, wx, wy, wz = bx - ax, by - ay, bz - az, cx - ax, cy - ay, cz - az
+        n = (uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx)
+        for i in (a, b, c):
+            acc[i][0] += n[0]
+            acc[i][1] += n[1]
+            acc[i][2] += n[2]
+    verts = b""
+    for i, (pos, nrm, uv) in enumerate(out_v):
+        if nrm is None:
+            ln = math.sqrt(sum(x * x for x in acc[i])) or 1.0
+            nrm = tuple(x / ln for x in acc[i])
+        verts += struct.pack("<3f3f3f", *pos, *nrm, uv[0], 1.0 - uv[1], 0.0)  # Roblox's V runs top-down
+    tris = b"".join(struct.pack("<3I", *f) for f in faces)
+    return b"version 2.00\n" + struct.pack("<HBB2I", 12, 36, 12, len(out_v), len(faces)) + verts + tris
+
+
+# ---------------------------------------------------------------------------------------------
 # Recognising a mesh by its shape
 
 

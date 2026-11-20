@@ -61,10 +61,6 @@ def _fleasion_rule(rule: dict, name: str, result: ImportResult) -> None:
             swap = Swap(name, targets, KIND_URL, str(rule.get("cdn_url", "")).strip(), enabled)
         elif mode == "local":
             path = str(rule.get("local_path", "")).strip()
-            if Path(path).suffix.lower() == ".obj":
-                result.skipped.append(f"{name}: .obj models need converting to Roblox's mesh format, "
-                                      "which Patchwork can't do yet")
-                return
             swap = Swap(name, targets, KIND_FILE, path, enabled)
             if not Path(path).is_file():
                 result.missing_files.append(f"{name}: {path}")

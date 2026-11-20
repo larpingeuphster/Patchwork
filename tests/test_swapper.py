@@ -81,12 +81,12 @@ def test_remove_blanks_images_but_never_3d(tmp_path):
     assert "can't be removed" in sw.state[ID_MESH]
 
 
-def test_3d_needs_an_asset_id(tmp_path):
+def test_3d_files_must_be_meshes(tmp_path):
     f = tmp_path / "x.png"
     f.write_bytes(BLUE)
     store, sw, hits, (_, e_mesh, _) = setup(tmp_path, [Swap("bad", [ID_MESH], KIND_FILE, str(f))])
     sw.tick()
-    assert body(store, e_mesh) == MESH_A and "another Roblox asset ID" in sw.state[ID_MESH]
+    assert body(store, e_mesh) == MESH_A and ".obj" in sw.state[ID_MESH]  # a picture can't replace a mesh
 
 
 def test_roblox_redownload_is_reswapped(tmp_path):

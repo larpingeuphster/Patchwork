@@ -86,7 +86,7 @@ def _dialog_types(kind: str) -> list[tuple[str, str]]:
         return [("Preset (JSON)", "*.json"), ("All files", "*.*")]
     if kind == "export":
         return [("All files", "*.*")]
-    return [("Roblox-ready files", "*.png *.jpg *.jpeg *.webp *.ktx2 *.ogg *.mp3 *.wav *.mesh *.rbxm *.rbxmx"),
+    return [("Roblox-ready files", "*.png *.jpg *.jpeg *.webp *.ktx2 *.ogg *.mp3 *.wav *.mesh *.obj *.rbxm *.rbxmx"),
             ("All files", "*.*")]
 
 

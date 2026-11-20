@@ -225,6 +225,20 @@ def to_ktx2_like(data: bytes, original: bytes) -> bytes:
         raise Unavailable(f"couldn't convert the replacement to a {like.describe()} texture: {exc}") from exc
 
 
+def mesh_file_for(data: bytes, original: bytes) -> bytes:
+    """A 3D replacement from a file: a Roblox mesh as is, or an OBJ model converted to one.
+    Only meshes can replace meshes (check_write enforces it again when writing)."""
+    from . import mesh
+    if cache.sniff(original) == "mesh" and mesh.is_obj(data):
+        try:
+            return mesh.from_obj(data)
+        except mesh.MeshError as exc:
+            raise Unavailable(str(exc)) from exc
+    if cache.sniff(original) == "mesh" and cache.sniff(data) != "mesh":
+        raise Unavailable("pick a Roblox mesh (.mesh) or an .obj model to replace a mesh")
+    return data
+
+
 def blank_like(original: bytes) -> bytes:
     """What a Remove swap writes: a transparent image the original's size, or nothing for other kinds."""
     if cache.sniff(original) in IMAGE_KINDS:
@@ -449,6 +463,8 @@ class CacheSwapper:
                 from . import ktx2
                 return _png(ktx2.decode(ktx2.parse(data)))
             return fit_image(data, original)
+        if cache.verdict(original) != cache.CLEAR:
+            return mesh_file_for(data, original)
         new = cache.sniff(data)
         if kind in ("ogg", "mp3", "wav") and new != kind:
             raise Unavailable(f"pick a .{kind} sound to replace this one (Roblox keeps the format)")
@@ -571,7 +587,7 @@ class CacheSwapper:
             else:
                 raise Unavailable(f"unknown swap type {swap.kind}")
             if cache.verdict(original) != cache.CLEAR and swap.kind != KIND_ASSET:
-                raise Unavailable("3D objects can only be swapped for another Roblox asset ID (another skin)")
+                data = mesh_file_for(data, original)
             if kind == "ktx2":
                 data = to_ktx2_like(data, original)
             elif kind in IMAGE_KINDS:

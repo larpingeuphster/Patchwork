@@ -99,3 +99,63 @@ def test_replacer_finds_a_draco_cached_mesh_by_shape(tmp_path):
     assert body(0) == downloads[202]  # the Draco copy of the scythe got the fancy skin
     assert body(1) == cached[1] and body(2) == cached[2]  # different shape / different size untouched
     assert sw.state[101] == "swapped"
+
+
+CUBE_OBJ = b"""# a cube
+v -1 -1 -1
+v 1 -1 -1
+v 1 1 -1
+v -1 1 -1
+v -1 -1 1
+v 1 -1 1
+v 1 1 1
+v -1 1 1
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+f 1/1 2/2 3/3 4/4
+f 5/1 8/4 7/3 6/2
+f 1/1 5/2 6/3 2/4
+f 2/1 6/2 7/3 3/4
+f 3/1 7/2 8/3 4/4
+f 5/1 1/2 4/3 8/4
+"""
+
+
+def test_obj_converts_to_a_roblox_mesh():
+    data = mesh.from_obj(CUBE_OBJ)
+    m = mesh.parse(data)
+    assert m.version == "2.00" and len(m.faces) == 12
+    assert mesh.shape(m)[1:] == (2.0, 2.0, 2.0)
+    assert mesh.is_obj(CUBE_OBJ) and not mesh.is_obj(data)
+
+
+def test_flat_or_empty_obj_is_refused():
+    flat = b"v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3\nf 1 3 4\nf 1 2 4\nf 2 3 4\n"
+    with pytest.raises(mesh.MeshError, match="flat"):
+        mesh.from_obj(flat)
+    with pytest.raises(mesh.MeshError, match="empty"):
+        mesh.from_obj(b"v 0 0 0\n")
+
+
+def test_cache_tab_replaces_a_mesh_with_an_obj(tmp_path, monkeypatch):
+    from patchwork import cache, roblox
+    from patchwork.controller import Controller
+    from tests.test_cache import make_store
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: [])
+    pts, faces = torus(12, 8)
+    store = make_store(tmp_path, [(b"\x07" * 16, cache.wrap("https://x/bow", "roblox-assettypeid: 4\r\n",
+                                                           draco_v7(pts, faces)), 10)])
+    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=store.directory)
+    try:
+        obj = tmp_path / "body.obj"
+        obj.write_bytes(CUBE_OBJ)
+        ctl.cache_replace((b"\x07" * 16).hex(), str(obj))
+        ctl.runner.swapper.tick(force=True)
+        conn = store.connect()
+        got = store.read_body(conn, b"\x07" * 16)[0]
+        conn.close()
+        assert len(mesh.parse(got).faces) == 12
+    finally:
+        ctl.shutdown()

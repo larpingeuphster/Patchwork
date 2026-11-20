@@ -86,8 +86,9 @@ def test_fleasion_groups_local_and_remove(tmp_path):
     assert by["elsewhere"].kind == KIND_FILE
     assert by["Bow / shoot"].value == "99"
     assert by["Bow / Inner / deep"].kind == KIND_URL
-    assert len(r.skipped) == 1 and "Bow / Arrow" in r.skipped[0] and ".obj" in r.skipped[0]
-    assert r.missing_files == ["elsewhere: C:/Users/Someone/Downloads/x.png"]
+    assert not r.skipped
+    assert by["Bow / Arrow"].kind == KIND_FILE and by["Bow / Arrow"].value == "C:/a/arrow.obj"  # converted when used
+    assert r.missing_files == ["elsewhere: C:/Users/Someone/Downloads/x.png", "Bow / Arrow: C:/a/arrow.obj"]
 
 
 def test_patchwork_relative_files(tmp_path):
