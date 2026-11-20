@@ -541,14 +541,15 @@ class Controller:
     def _push_captures(self) -> None:
         self.runner.swapper.set_captures(self.captures.active(), self.captures.body)
 
-    def capture_start(self, which: str, clear: bool = True) -> None:
+    def capture_start(self, which: str, clear: bool = False) -> None:
         """Start noting which cache files Roblox loads, while the player shows a skin in game."""
         if which not in ("original", "replacement"):
             raise UserError("Unknown capture step.")
         if not self.runner.store.exists():
             raise UserError("Roblox's cache wasn't found. Open RIVALS first.")
         if clear:
-            # Swaps are kept; everything else has to be loaded again, so the skin's files show up as new.
+            # Only when asked: a skin Roblox already holds in memory isn't downloaded again after a clear,
+            # so clearing can hide the very files being looked for.
             self.runner.swapper.clear_keeping_swaps()
         with self._lock:
             self._cap["mark"] = self.runner.swapper.capture_mark()
@@ -630,18 +631,27 @@ class Controller:
 
     # ----- cache browser ------------------------------------------------------------
 
+    def cache_watch(self, on: bool = True) -> dict:
+        """Start (or stop) watching: files Roblox downloads or reads from now on are marked."""
+        with self._lock:
+            self._cb_mark = self.runner.swapper.capture_mark() if on else None
+        return {"watching": self._cb_mark is not None}
+
     def cache_browse(self) -> dict:
         """What Roblox has cached, newest first, and which files Patchwork replaces."""
         rows = self.runner.swapper.browse()
+        mark = getattr(self, "_cb_mark", None)
         replaced = self.captures.targets()
         manifest = self.runner.swapper.backups.manifest
         for r in rows:
             r["group"] = capture.GROUPS.get(r["kind"], r["kind"])
+            r["fresh"] = mark is not None and mark.get(bytes.fromhex(r["hex"])) != (r["bytes"], r["atime"], r["hits"])
             r["replaced_by"] = replaced.get(r["hex"], "")
             rec = manifest.get(r["hex"])
             if not r["replaced_by"] and rec and rec.get("asset_id"):
                 r["replaced_by"] = f"swap of {rec['asset_id']}"
-        return {"found": self.runner.store.exists(), "rows": rows[:3000], "total": len(rows)}
+        return {"found": self.runner.store.exists(), "rows": rows[:3000], "total": len(rows),
+                "watching": mark is not None, "fresh": sum(1 for r in rows if r["fresh"])}
 
     def cache_preview(self, hex: str) -> dict:
         return self.runner.swapper.preview_entry(str(hex))

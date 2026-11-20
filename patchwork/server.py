@@ -32,7 +32,7 @@ API_METHODS = {
     "start", "stop", "clear_cache", "clear_downloads", "restore_cache",
     "set_setting", "accept_notice", "open_folder",
     "capture_start", "capture_stop", "capture_state", "capture_save", "capture_toggle", "capture_delete",
-    "cache_report", "cache_browse", "cache_preview", "cache_replace", "cache_restore", "cache_export", "cache_mesh",
+    "cache_report", "cache_browse", "cache_preview", "cache_replace", "cache_restore", "cache_export", "cache_mesh", "cache_watch",
 }
 
 _TYPES = {".js": "text/javascript", ".css": "text/css", ".html": "text/html", ".svg": "image/svg+xml",

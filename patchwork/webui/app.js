@@ -645,7 +645,8 @@
   const CB = { rows: [], filter: "all", shown: 120, previews: new Map(), loaded: false };
   const CB_GROUPS = { texture: ["ktx2", "ktx"], image: ["png", "webp", "jpg", "jpeg", "gif"], mesh: ["mesh"], rbxm: ["rbxm"], sound: ["ogg", "mp3", "wav"] };
   function cbVisible() {
-    return CB.rows.filter((r) => CB.filter === "all" ? true : CB.filter === "replaced" ? !!r.replaced_by : (CB_GROUPS[CB.filter] || []).includes(r.kind));
+    return CB.rows.filter((r) => CB.filter === "all" ? true : CB.filter === "replaced" ? !!r.replaced_by
+      : CB.filter === "fresh" ? r.fresh : (CB_GROUPS[CB.filter] || []).includes(r.kind));
   }
   const cbObserver = new IntersectionObserver((items) => {
     for (const it of items) if (it.isIntersecting) { cbObserver.unobserve(it.target); cbThumb(it.target); }
@@ -681,15 +682,36 @@
     grid.innerHTML = rows.slice(0, CB.shown).map((r) => `<button class="cb-tile${r.replaced_by ? " replaced" : ""}" data-hex="${r.hex}">
         <div class="cb-thumb">${cbIcon(r.kind)}</div>
         <div class="cb-meta"><b>${esc(r.group)}</b><span>${kb(r.size)}</span></div>
-        ${r.replaced_by ? `<span class="cb-badge">Replaced</span>` : ""}</button>`).join("") || `<p class="hint">Nothing of that kind.</p>`;
+        ${r.replaced_by ? `<span class="cb-badge">Replaced</span>` : r.fresh ? `<span class="cb-badge cb-new">New</span>` : ""}</button>`).join("") || `<p class="hint">Nothing of that kind.</p>`;
     $("#cb-more").hidden = rows.length <= CB.shown;
     $$(".cb-tile", grid).forEach((t) => cbObserver.observe(t));
   }
   async function loadCache() {
-    try { const r = await api("cache_browse"); CB.rows = r.rows; CB.loaded = true; CB.previews.clear(); renderCache(); }
+    try {
+      const r = await api("cache_browse"); CB.rows = r.rows; CB.loaded = true; CB.previews.clear();
+      CB.watching = r.watching;
+      $("#cb-watch").textContent = r.watching ? "Stop watching" : "Watch";
+      $("#cb-watch").classList.toggle("recording", r.watching);
+      const chip = $("#cb-fresh-chip");
+      chip.hidden = !r.watching;
+      chip.textContent = `Since watch (${r.fresh})`;
+      if (!r.watching && CB.filter === "fresh") { CB.filter = "all"; $$("#cb-filters .chip").forEach((x) => x.classList.toggle("active", x.dataset.cb === "all")); }
+      renderCache();
+    }
     catch (e) { CB.loaded = true; CB.rows = []; renderCache(); }
   }
   $("#cb-refresh").addEventListener("click", () => { CB.shown = 120; loadCache(); });
+  $("#cb-watch").addEventListener("click", async () => {
+    const on = !CB.watching;
+    if ((await act("cache_watch", { on })) === undefined) return;
+    if (on) {
+      CB.filter = "fresh";
+      $$("#cb-filters .chip").forEach((x) => x.classList.toggle("active", x.dataset.cb === "fresh"));
+      toast("Watching. Look at the skin in RIVALS, then press Refresh");
+    }
+    CB.shown = 120;
+    loadCache();
+  });
   $("#cb-more-btn").addEventListener("click", () => { CB.shown += 240; renderCache(); });
   $("#cb-filters").addEventListener("click", (e) => {
     const c = e.target.closest("[data-cb]");

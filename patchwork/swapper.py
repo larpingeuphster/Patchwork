@@ -381,7 +381,7 @@ class CacheSwapper:
                 if info.kind not in capture.GROUPS:
                     continue
                 out.append({"hex": e.hex, "kind": info.kind, "size": info.body_len, "atime": e.atime,
-                            "hits": e.hits})
+                            "hits": e.hits, "bytes": e.size})
             out.sort(key=lambda r: (-r["atime"], r["hex"]))
             return out
 

@@ -58,9 +58,6 @@ def test_capture_learns_and_swaps_a_skin(setup):
     with pytest.raises(UserError, match="same kind"):
         ctl.capture_save("Bad", {default_mesh.hex(): fancy_tex.hex()})
     ctl.capture_save("Fancy scythe", st["guess"])
-    # Capturing the replacement cleared the cache; Roblox downloads the default skin again in game.
-    add(store, default_mesh, "https://c1.rbxcdn.com/a", MESH_DEFAULT)
-    add(store, default_tex, "https://c1.rbxcdn.com/b", KTX, "")
     ctl.runner.swapper.tick(force=True)
     assert body(store, default_mesh) == MESH_FANCY and body(store, default_tex) == KTX_FANCY
 
@@ -133,3 +130,26 @@ def test_cache_browser_replace_and_restore(setup, tmp_path):
     ctl.cache_restore(tex_id.hex())
     ctl.runner.swapper.tick(force=True)
     assert body(store, tex_id) == original_tex
+
+
+def test_cache_watch_marks_files_loaded_since(setup):
+    import sqlite3
+    store, ctl = setup
+    ctl.cache_watch(True)
+    assert ctl.cache_browse()["fresh"] == 0
+    add(store, b"\x51" * 16, "https://x/new", MESH_FANCY)  # downloaded after Watch
+    conn = sqlite3.connect(store.db_path)  # and an old file Roblox read again
+    conn.execute("UPDATE files SET atime = 99, hits = 2 WHERE id = ?", (b"\x0f" * 16,))
+    conn.commit()
+    conn.close()
+    r = ctl.cache_browse()
+    assert r["watching"] and r["fresh"] == 2
+    assert {x["hex"] for x in r["rows"] if x["fresh"]} == {(b"\x51" * 16).hex(), (b"\x0f" * 16).hex()}
+    ctl.cache_watch(False)
+    assert ctl.cache_browse()["fresh"] == 0
+
+
+def test_capture_does_not_clear_by_default(setup):
+    store, ctl = setup
+    ctl.capture_start("original")
+    assert len(ctl.cache_browse()["rows"]) == 1  # the lobby mesh is still there
