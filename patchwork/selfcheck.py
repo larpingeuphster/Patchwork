@@ -73,7 +73,19 @@ def run(report_path: str) -> int:
 
         return "pystray + icon"
 
+    def textures() -> str:
+        from PIL import Image
+
+        from . import ktx2
+        img = Image.new("RGBA", (16, 16), (200, 30, 60, 255))
+        for fmt in ("BC1", "BC3"):
+            tex = ktx2.parse(ktx2.make(img, fmt, levels=5, zstd=True))
+            if ktx2.distance(ktx2.signature(ktx2.decode(tex)), ktx2.signature(img)) > 6:
+                raise RuntimeError(f"{fmt} round trip changed the picture")
+        return "KTX2 BC1/BC3 + zstd"
+
     check("cache engine", cache_engine)
+    check("textures", textures)
     check("interface", ui)
     check("native window", window)
     check("tray icon", tray_icon)

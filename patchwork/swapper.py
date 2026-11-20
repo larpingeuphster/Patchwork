@@ -43,6 +43,8 @@ MAX_ASSET = 50 * 1024 * 1024
 RETRY_REFUSED_AFTER = 6 * 60 * 60  # Roblox said no (sign-in needed, missing asset)
 RETRY_NETWORK_AFTER = 2 * 60  # couldn't reach Roblox: try again soon
 IMAGE_KINDS = {"png", "jpeg", "gif", "webp"}
+MATCH_MAX = 14.0  # mean channel difference (0-255) of the 16x16 thumbnails for a texture match
+MATCH_MARGIN = 4.0  # ...and how much better than the next best it must be
 _ID_IN_URL = re.compile(r"(?:[?&]id=|/assetid/|/asset-id/)(\d+)", re.IGNORECASE)
 
 
@@ -105,6 +107,9 @@ class Fingerprint:
     md5: str
     size: int
     kind: str
+    sig: bytes = b""  # tiny thumbnail, for finding the texture's KTX2 copy by its look
+    width: int = 0
+    height: int = 0
 
 
 class IdMap:
@@ -132,8 +137,9 @@ class IdMap:
         """The asset's fingerprint, or a reason it isn't available."""
         rec = self._data.get(str(asset_id))
         now = time.time()
-        if rec and "md5" in rec:
-            return Fingerprint(rec["md5"], rec["size"], rec.get("kind", "other"))
+        if rec and "md5" in rec and (rec.get("kind") not in IMAGE_KINDS or "sig" in rec or rec.get("nosig")):
+            return Fingerprint(rec["md5"], rec["size"], rec.get("kind", "other"), bytes.fromhex(rec.get("sig", "")),
+                               rec.get("w", 0), rec.get("h", 0))
         if rec and now - rec.get("at", 0) < (RETRY_NETWORK_AFTER if rec.get("transient") else RETRY_REFUSED_AFTER):
             return rec.get("error", "unavailable")
         try:
@@ -143,7 +149,19 @@ class IdMap:
             self.save()
             return str(exc)
         fp = Fingerprint(cache.md5(body), len(body), cache.sniff(body))
-        self._data[str(asset_id)] = {"md5": fp.md5, "size": fp.size, "kind": fp.kind, "at": now}
+        rec = {"md5": fp.md5, "size": fp.size, "kind": fp.kind, "at": now}
+        if fp.kind in IMAGE_KINDS:
+            try:
+                from PIL import Image
+
+                from . import ktx2
+                img = Image.open(io.BytesIO(body))
+                img.load()
+                fp.sig, fp.width, fp.height = ktx2.signature(img), img.width, img.height
+                rec.update(sig=fp.sig.hex(), w=fp.width, h=fp.height)
+            except Exception:
+                rec["nosig"] = True
+        self._data[str(asset_id)] = rec
         self.save()
         return fp
 
@@ -164,6 +182,36 @@ def fit_image(data: bytes, like: bytes) -> bytes:
     out = io.BytesIO()
     img.convert("RGBA").save(out, format="PNG")
     return out.getvalue()
+
+
+def _png(img) -> bytes:
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def to_ktx2_like(data: bytes, original: bytes) -> bytes:
+    """``data`` (any image Pillow reads, or a KTX2) as a KTX2 texture shaped like ``original``."""
+    from . import ktx2
+    try:
+        like = ktx2.parse(original)
+    except ktx2.KtxError as exc:
+        raise Unavailable(f"the cached texture can't be read ({exc})") from exc
+    try:
+        from PIL import Image
+        if data.startswith(ktx2.MAGIC):
+            img = ktx2.decode(ktx2.parse(data))
+        else:
+            img = Image.open(io.BytesIO(data))
+            img.load()
+    except ImportError as exc:
+        raise Unavailable("image conversion isn't available in this build") from exc
+    except Exception as exc:
+        raise Unavailable("the replacement isn't an image Patchwork can read") from exc
+    try:
+        return ktx2.encode_like(img, like)
+    except Exception as exc:
+        raise Unavailable(f"couldn't convert the replacement to a {like.describe()} texture: {exc}") from exc
 
 
 def blank_like(original: bytes) -> bytes:
@@ -242,11 +290,13 @@ class CacheSwapper:
         # Keyed by (id, size, atime) so an entry Roblox rewrites is read again.
         self._body_info: dict[tuple[bytes, int, int], tuple[int, str]] = {}
         self._md5: dict[tuple[bytes, int, int], str] = {}
+        self._looks: dict[tuple[bytes, int, int], tuple[bytes, int, int] | str] = {}
         self._conn = None  # kept open: SQLite's data_version only compares within one connection
         self._replacements: dict[tuple[str, str], bytes] = {}
         self._reported: set[str] = set()
         self._last_unavailable: tuple = ()
         self._described = False
+        self._matched_note_done = False
         self.stats = {"swapped": 0, "waiting": 0, "unavailable": 0}
         self.state: dict[int, str] = {}  # asset id -> "swapped" / "waiting" / reason
 
@@ -358,11 +408,25 @@ class CacheSwapper:
             lines = [f"Patchwork {__version__} cache report: {len(entries)} entries, {redirects} redirects",
                      "Naming tests (how many entries each rule finds):"]
             lines += [f"  {n}\t{name}" for name, n in sorted(tests.items(), key=lambda kv: -kv[1])]
-            lines += ["", "id\tkind\tbody_bytes\tcategory\tstatus\turl\tlocation"]
+            from . import ktx2
+            formats: dict[str, int] = {}
+            described = {}
+            for e in entries:
+                if infos[e.id].kind == "ktx2":
+                    try:
+                        tex = ktx2.parse(self.store.read_body(conn, e.id)[0])
+                        described[e.id] = tex.describe() + ("" if tex.readable else " (can't read)")
+                        key = f"{tex.format_name}/{ktx2.SUPERCOMPRESSION.get(tex.supercompression)}"
+                    except Exception as exc:
+                        described[e.id] = key = f"unreadable: {exc}"
+                    formats[key] = formats.get(key, 0) + 1
+            lines += ["Texture formats:"] + [f"  {n}\t{k}" for k, n in sorted(formats.items(), key=lambda kv: -kv[1])]
+            lines += ["", "id\tkind\tbody_bytes\tcategory\tstatus\turl\tlocation\ttexture"]
             for e in entries:
                 info = infos[e.id]
                 lines.append(f"{e.hex}\t{info.kind}\t{info.body_len}\t{e.category}\t{info.status}\t"
-                             f"{(info.url or '').split('?', 1)[0]}\t{(info.location or '').split('?', 1)[0]}")
+                             f"{(info.url or '').split('?', 1)[0]}\t{(info.location or '').split('?', 1)[0]}\t"
+                             f"{described.get(e.id, '')}")
             return lines
 
     # --- helpers ---------------------------------------------------------------------------
@@ -382,6 +446,9 @@ class CacheSwapper:
                 raise Unavailable("3D objects can't be removed (that would make them invisible); swap them for "
                                   "another skin's asset ID instead")
             data = blank_like(original)
+            if kind == "ktx2":
+                from PIL import Image
+                data = to_ktx2_like(_png(Image.new("RGBA", (4, 4), (0, 0, 0, 0))), original)
         else:
             if swap.kind == KIND_ASSET:
                 data = fetch_asset(int(swap.value))
@@ -404,12 +471,83 @@ class CacheSwapper:
             if cache.verdict(original) != cache.CLEAR and swap.kind != KIND_ASSET:
                 raise Unavailable("3D objects can only be swapped for another Roblox asset ID (another skin)")
             if kind == "ktx2":
-                raise Unavailable("Roblox stores this texture as a GPU texture pack, which Patchwork can't "
-                                  "write yet")
-            if kind in IMAGE_KINDS:
+                data = to_ktx2_like(data, original)
+            elif kind in IMAGE_KINDS:
                 data = fit_image(data, original)
         self._replacements[key] = data
         return data
+
+    def _look(self, conn, entry: cache.Entry) -> tuple[bytes, int, int] | str:
+        """(thumbnail, width, height) of a cached KTX2 texture, or why it can't be read."""
+        key = (entry.id, entry.size, entry.atime)
+        if key not in self._looks:
+            from . import ktx2
+            try:
+                body, _ = self.store.read_body(conn, entry.id)
+                tex = ktx2.parse(body)
+                if not tex.readable:
+                    self._looks[key] = tex.describe()
+                else:
+                    self._looks[key] = (ktx2.signature(ktx2.decode(tex, ktx2.preview_level(tex))), tex.width,
+                                        tex.height)
+            except Exception as exc:
+                self._looks[key] = f"unreadable ({type(exc).__name__})"
+        return self._looks[key]
+
+    def _match_textures(self, conn, entries: list[cache.Entry], linked: dict) -> dict[str, tuple[int, Swap]]:
+        """Cached KTX2 textures that look like a wanted image -> (asset id, swap).
+
+        Roblox only hands the KTX2 version of a texture to signed-in players, so its bytes never
+        match the PNG Patchwork can download. Instead each cached texture is decoded and compared
+        with the PNG as a 16x16 thumbnail. A match must be close and clearly better than the next
+        best, so plain or look-alike textures are left alone rather than guessed.
+        """
+        from . import ktx2
+        targets = []
+        taken = {aid for aid, _ in linked.values()}
+        for swap in self.swaps:
+            for asset_id in swap.targets:
+                if asset_id in taken:
+                    continue
+                fp = self.idmap.get(asset_id)
+                if isinstance(fp, Fingerprint) and fp.kind in IMAGE_KINDS and fp.sig:
+                    targets.append((asset_id, swap, fp))
+                    taken.add(asset_id)
+        if not targets:
+            return {}
+        looks = []
+        unreadable: dict[str, int] = {}
+        for entry in entries:
+            if self._info(conn, entry).kind != "ktx2" or entry.hex in linked:
+                continue
+            rec = self.backups.manifest.get(entry.hex)
+            if rec and self._entry_md5(conn, entry) == rec.get("written_md5"):
+                continue  # holds a replacement already; the main loop counts it
+            look = self._look(conn, entry)
+            if isinstance(look, str):
+                unreadable[look.split(" ", 1)[0]] = unreadable.get(look.split(" ", 1)[0], 0) + 1
+                continue
+            looks.append((entry.hex, *look))
+        if unreadable:
+            summary = ", ".join(f"{n} {k}" for k, n in sorted(unreadable.items()))
+            self._note(f"ktx-unreadable:{summary}", f"Some cached textures use a format Patchwork can't read yet "
+                       f"({summary}); texture swaps for those won't apply.", logging.INFO)
+        found: dict[str, tuple[float, int, Swap]] = {}
+        for asset_id, swap, fp in targets:
+            scored = sorted((ktx2.distance(fp.sig, sig), hx) for hx, sig, w, h in looks
+                            if ktx2.same_shape(fp.width, fp.height, w, h))
+            if not scored:
+                continue
+            best, hx = scored[0]
+            runner_up = scored[1][0] if len(scored) > 1 else 255.0
+            if best > MATCH_MAX or runner_up - best < MATCH_MARGIN:
+                continue
+            if hx not in found or best < found[hx][0]:
+                found[hx] = (best, asset_id, swap)
+        if found and not self._matched_note_done:
+            self._matched_note_done = True
+            log.info("Matched %d texture(s) to Roblox's cached KTX2 copies by how they look.", len(found))
+        return {hx: (aid, swap) for hx, (_, aid, swap) in found.items()}
 
     def _wanted(self, linked: set[int]) -> dict[tuple[int, str], tuple[int, Swap]]:
         """(size, md5) of each target's original -> (asset id, swap). Earlier swaps win.
@@ -465,7 +603,7 @@ class CacheSwapper:
 
     def _forget(self, entry_id: bytes) -> None:
         """Drop what's remembered about an entry after Patchwork writes to it."""
-        for memo in (self._md5, self._body_info):
+        for memo in (self._md5, self._body_info, self._looks):
             for key in [k for k in memo if k[0] == entry_id]:
                 del memo[key]
 
@@ -560,6 +698,7 @@ class CacheSwapper:
                 if entry is not None:
                     linked.setdefault(entry.hex, (asset_id, swap))
         wanted = self._wanted({aid for aid, _ in linked.values()})
+        textures = self._match_textures(conn, entries, linked)
         sizes = {size for size, _ in wanted}
         present = {e.hex: e for e in entries}
         active_keys = {swap_key(s) for s in self.swaps}
@@ -595,7 +734,7 @@ class CacheSwapper:
                 continue  # handled by _apply_captures
             body_len = self._info(conn, entry).body_len
             rec = self.backups.manifest.get(entry.hex)
-            if body_len not in sizes and rec is None and entry.hex not in linked:
+            if body_len not in sizes and rec is None and entry.hex not in linked and entry.hex not in textures:
                 continue
             digest = self._entry_md5(conn, entry)
             if digest is None:
@@ -604,7 +743,7 @@ class CacheSwapper:
                 swapped += 1  # still holds our replacement
                 self.state[rec.get("asset_id")] = "swapped"
                 continue
-            match = linked.get(entry.hex) or wanted.get((body_len, digest))
+            match = linked.get(entry.hex) or textures.get(entry.hex) or wanted.get((body_len, digest))
             if match is None:
                 continue
             asset_id, swap = match
@@ -714,6 +853,7 @@ class CacheSwapper:
                         in_use += 1
             self._md5.clear()
             self._body_info.clear()
+            self._looks.clear()
             self._described = False
             self._dirty = True
             return len(drop), len(keep), in_use
