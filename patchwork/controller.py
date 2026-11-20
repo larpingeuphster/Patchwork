@@ -8,6 +8,7 @@ sequence number so the page can long-poll for them.
 from __future__ import annotations
 
 import collections
+import logging
 import os
 import shutil
 import subprocess
@@ -22,6 +23,8 @@ from .config import KIND_ASSET, KIND_FILE, KIND_REMOVE, KIND_URL, Swap, app_dir,
 from .profiles import Store
 from .rules import Hit
 from .swapper import CacheRunner
+
+log = logging.getLogger("patchwork")
 
 SUMMARY_SECONDS = 15
 MODE_LABELS = {KIND_ASSET: "ID", KIND_URL: "Link", KIND_FILE: "File", KIND_REMOVE: "Remove"}
@@ -478,12 +481,29 @@ class Controller:
     # ----- maintenance --------------------------------------------------------------
 
     def clear_cache(self, close_roblox: bool | None = None) -> dict | None:
-        """Delete Roblox's asset cache.
+        """Clear Roblox's cache but keep the entries holding swaps.
 
-        Windows locks the cache while Roblox is open, so if it's running this
-        returns {"confirm": "roblox_open"} first; call again with
-        close_roblox=True to close Roblox and clear in one go.
+        Roblox finds those again straight away, so swaps show instantly after a clear
+        instead of waiting for a re-download. Works with Roblox open. ``close_roblox`` is
+        only used when the cache index can't be found and the old full wipe is needed.
         """
+        if self.runner.store.exists():
+            try:
+                removed, kept, in_use = self.runner.swapper.clear_keeping_swaps()
+            except Exception as exc:
+                log.exception("Clearing the cache failed")
+                raise UserError(f"Couldn't clear Roblox's cache: {exc}\n\nTry again in a moment.") from exc
+            roblox.clear_cache(roblox.temp_cache_paths())  # Roblox's older download folder, best effort
+            msg = f"Cleared Roblox's cache ({removed} item(s))"
+            msg += f" and kept your {kept} swapped asset(s), so they load straight away." if kept else "."
+            if in_use:
+                msg += f" {in_use} file(s) Roblox has open right now were left; they're cleared next time."
+            self.log(msg)
+            return {"removed": removed, "kept": kept}
+        return self._wipe_cache(close_roblox)
+
+    def _wipe_cache(self, close_roblox: bool | None) -> dict | None:
+        """Delete Roblox's whole cache (only when its index isn't where Patchwork expects it)."""
         running = roblox.running_clients()
         if running and not close_roblox:
             return {"confirm": "roblox_open", "running": running}

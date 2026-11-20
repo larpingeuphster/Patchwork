@@ -312,6 +312,12 @@ def cache_paths() -> list[Path]:
     return paths
 
 
+def temp_cache_paths() -> list[Path]:
+    """Roblox's older download folder under %TEMP% (safe to delete at any time)."""
+    temp = _env_path("TEMP")
+    return [temp / "Roblox" / "http"] if temp else []
+
+
 def lockers(paths: list[Path]) -> list[tuple[int, str]]:
     """Programs that have any of ``paths`` open, as (pid, name). Windows only; [] if unknown.
 

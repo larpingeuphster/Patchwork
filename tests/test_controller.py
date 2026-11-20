@@ -218,18 +218,20 @@ def test_cache_connection_closes_from_another_thread(tmp_path, caplog):
         conn.execute("SELECT 1")  # really closed (not just "wrong thread")
 
 
-def test_clear_cache_lets_go_of_the_cache_first(tmp_path, monkeypatch):
+def test_clear_cache_keeps_swaps_and_works_with_roblox_open(tmp_path, monkeypatch):
     from patchwork import cache, roblox
     from tests.test_cache import PNG_HEADERS, make_store, png
     store = make_store(tmp_path, [(b"\x01" * 16, cache.wrap("u", PNG_HEADERS, png()), 10)])
     ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=store.directory)
-    seen_open = []
-    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: [])
-    monkeypatch.setattr(roblox, "clear_cache", lambda *a, **k: (seen_open.append(ctl.runner.swapper._conn), ([], []))[1])
+    closed = []
+    monkeypatch.setattr(roblox, "running_clients", lambda *a, **k: ["RobloxPlayerBeta.exe"])
+    monkeypatch.setattr(roblox, "close_clients", lambda *a, **k: closed.append(True))
+    monkeypatch.setattr(roblox, "temp_cache_paths", lambda: [])
     try:
         ctl.runner.swapper.tick(force=True)
         assert ctl.runner.swapper._conn is not None  # watching keeps the index open...
-        ctl.clear_cache()
-        assert seen_open == [None]  # ...but not while clearing
+        assert ctl.clear_cache() == {"removed": 1, "kept": 0}
+        assert ctl.runner.swapper._conn is None  # ...but lets go after clearing
+        assert not closed  # Roblox didn't need closing
     finally:
         ctl.shutdown()

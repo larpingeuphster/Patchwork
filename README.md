@@ -98,7 +98,7 @@ Keyboard shortcuts:
 
 The **Activity** tab shows each asset as it's swapped in Roblox's cache, a regular summary (swapped, waiting for Roblox to download, can't be swapped), and any warnings.
 
-**Clear Cache** deletes Roblox's whole cache (closing Roblox if needed). You rarely need it now: swaps are applied on top of the cache, and Roblox downloads everything again after a clear, so swaps take a match longer to show.
+**Clear Cache** deletes Roblox's cache but keeps the assets Patchwork has swapped, so your swaps still load instantly afterwards. It works with Roblox open.
 
 ### Web links
 

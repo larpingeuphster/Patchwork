@@ -192,3 +192,42 @@ def test_asset_id_in_url():
     assert swapper.asset_id_in("https://assetdelivery.roblox.com/v1/asset/?id=123&x=1") == 123
     assert swapper.asset_id_in("https://assetdelivery.roblox.com/v2/assetId/456") == 456
     assert swapper.asset_id_in("https://fts.rbxcdn.com/abc?id=5") is None
+
+
+def test_clear_keeps_swapped_entries_so_they_load_instantly(tmp_path):
+    swaps = [Swap("Skin", [ID_MESH], KIND_ASSET, str(ID_MESH_B))]
+    store, sw, hits, (e_red, e_mesh, e_other) = setup(tmp_path, swaps)
+    big = b"\x04" * 16  # an entry stored as its own file
+    conn = store.connect()
+    raw = cache.wrap("https://c4.rbxcdn.com/big", PNG_HEADERS, png((1, 2, 3, 255), (128, 128)) + b"\x00" * 9000)
+    conn.execute("INSERT INTO files VALUES (?,?,?,?,?,?,?,?)", (big, None, len(raw), 1, 0, 10, 0, 0))
+    conn.close()
+    store.blob_path(big).parent.mkdir(parents=True, exist_ok=True)
+    store.blob_path(big).write_bytes(raw)
+    other_file = store.blobs / "notes.txt"  # anything that isn't a cache file is left alone
+    other_file.write_text("x")
+    sw.tick()
+    assert body(store, e_mesh) == MESH_B
+    removed, kept, in_use = sw.clear_keeping_swaps()
+    assert (removed, kept, in_use) == (3, 1, 0)
+    conn = store.connect()
+    ids = {bytes(r[0]) for r in conn.execute("SELECT id FROM files")}
+    conn.close()
+    assert ids == {e_mesh}
+    assert not store.blob_path(big).exists() and other_file.exists()
+    assert body(store, e_mesh) == MESH_B  # the swap survives the clear
+    hits.clear()
+    sw.tick(force=True)
+    assert hits == [] and sw.stats["swapped"] == 1  # nothing to redo
+
+
+def test_clear_drops_entries_roblox_replaced_since(tmp_path):
+    swaps = [Swap("Skin", [ID_MESH], KIND_ASSET, str(ID_MESH_B))]
+    store, sw, hits, (e_red, e_mesh, e_other) = setup(tmp_path, swaps)
+    sw.tick()
+    conn = store.connect()  # Roblox writes a fresh copy over the swapped one
+    conn.execute("UPDATE files SET content = ?, atime = 9 WHERE id = ?",
+                 (cache.wrap("https://c2.rbxcdn.com/m", "roblox-assettypeid: 4\r\n", MESH_A), e_mesh))
+    conn.commit()
+    conn.close()
+    assert sw.clear_keeping_swaps() == (3, 0, 0)

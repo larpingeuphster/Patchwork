@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import logging
+import re
 import threading
 import time
 import urllib.error
@@ -34,6 +34,8 @@ from .downloads import DownloadError, Downloads
 from .rules import Hit
 
 log = logging.getLogger("patchwork")
+
+_BLOB_NAME = re.compile(r"[0-9a-f]{32}")
 
 ASSET_URL = "https://assetdelivery.roblox.com/v1/asset/?id={id}"
 MAX_ASSET = 50 * 1024 * 1024
@@ -510,6 +512,53 @@ class CacheSwapper:
                 pass
         self.stats["swapped"] = swapped
         self.stats["waiting"] = sum(1 for v in self.state.values() if v == "waiting")
+
+    def clear_keeping_swaps(self) -> tuple[int, int, int]:
+        """Delete Roblox's cached assets except the ones holding swaps.
+
+        Roblox looks assets up in its cache by address, so a swapped entry that stays is
+        used again straight away after a clear, with no download and no wait. Works while
+        Roblox is open: the index is shared through SQLite's own locking, and files Roblox
+        has open are simply left for later. Returns (removed, kept, left_in_use).
+        """
+        with self._lock:
+            if not self.store.exists():
+                return 0, 0, 0
+            conn = self._conn or self.store.connect()
+            try:
+                entries = self.store.entries(conn)
+                keep = set()
+                for entry in entries:
+                    rec = self.backups.manifest.get(entry.hex)
+                    if rec and self._entry_md5(conn, entry) == rec.get("written_md5"):
+                        keep.add(entry.id)
+                drop = [(e.id,) for e in entries if e.id not in keep]
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conn.executemany("DELETE FROM files WHERE id = ?", drop)
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+            finally:
+                self.close()
+            keep_names = {i.hex() for i in keep}
+            in_use = 0
+            if self.store.blobs.is_dir():
+                for path in self.store.blobs.rglob("*"):
+                    if not path.is_file() or path.name in keep_names:
+                        continue
+                    if not (_BLOB_NAME.fullmatch(path.name) or path.name.endswith(".tmp")):
+                        continue
+                    try:
+                        path.unlink()
+                    except OSError:
+                        in_use += 1
+            self._md5.clear()
+            self._body_info.clear()
+            self._described = False
+            self._dirty = True
+            return len(drop), len(keep), in_use
 
     def restore_all(self) -> int:
         """Put every original back (when Patchwork quits). Returns how many entries were restored."""

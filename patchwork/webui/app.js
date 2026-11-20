@@ -522,8 +522,7 @@
   // ---------- footer, power, settings ----------
   $("#clear-cache").addEventListener("click", async () => {
     const sure = await confirmBox("Clear Roblox's cache?",
-      "<p>This deletes everything Roblox has saved, <b>including your swapped assets</b>. They come back once Roblox downloads those assets again, and show from the match after that.</p>" +
-      "<p>You usually don't need this: Patchwork swaps assets as Roblox downloads them.</p>", "Clear cache", "danger");
+      "<p>This deletes what Roblox has saved <b>except your swapped assets</b>, so your swaps still load instantly afterwards. Roblox can stay open.</p>", "Clear cache");
     if (!sure) return;
     let r;
     try { r = await api("clear_cache"); } catch (e) { return alertBox("Couldn't clear the cache", e.message); }
@@ -534,7 +533,7 @@
       if (!ok) return;
       try { r = await api("clear_cache", { close_roblox: true }); } catch (e) { return alertBox("Couldn't clear the cache", e.message); }
     }
-    toast("Roblox's cache is clear");
+    toast(r && r.kept ? `Roblox's cache is clear · kept ${r.kept} swap(s)` : "Roblox's cache is clear");
   });
   $("#open-configs").addEventListener("click", () => act("open_folder", { which: "configs" }));
   $("#undo-btn").addEventListener("click", () => act("undo"));

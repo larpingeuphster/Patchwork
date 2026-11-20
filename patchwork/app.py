@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             controller.clear_cache(close_roblox=True)
             if tray_icon:
-                tray_icon.notify("Roblox's cache is clear. Open Roblox to load your swaps.")
+                tray_icon.notify("Roblox's cache is clear. Your swaps were kept, so they load straight away.")
         except Exception as exc:
             if tray_icon:
                 tray_icon.notify(f"Couldn't clear Roblox's cache: {exc}")
