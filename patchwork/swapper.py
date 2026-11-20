@@ -225,6 +225,17 @@ def to_ktx2_like(data: bytes, original: bytes) -> bytes:
         raise Unavailable(f"couldn't convert the replacement to a {like.describe()} texture: {exc}") from exc
 
 
+def sound_like(data: bytes, kind: str) -> bytes:
+    """A replacement sound in the cached sound's format (converted from MP3/WAV/FLAC/OGG if needed)."""
+    if cache.sniff(data) == kind:
+        return data
+    from . import audio
+    try:
+        return audio.convert(data, kind)
+    except audio.AudioError as exc:
+        raise Unavailable(str(exc)) from exc
+
+
 def mesh_file_for(data: bytes, original: bytes) -> bytes:
     """A 3D replacement from a file: a Roblox mesh as is, or an OBJ model converted to one.
     Only meshes can replace meshes (check_write enforces it again when writing)."""
@@ -317,6 +328,7 @@ class CacheSwapper:
         self._md5: dict[tuple[bytes, int, int], str] = {}
         self._looks: dict[tuple[bytes, int, int], tuple[bytes, int, int] | str] = {}
         self._shapes: dict[tuple[bytes, int], tuple | str] = {}
+        self._models: dict[tuple[bytes, int], str] = {}
         self._conn = None  # kept open: SQLite's data_version only compares within one connection
         self._replacements: dict[tuple[str, str], bytes] = {}
         self._reported: set[str] = set()
@@ -394,10 +406,23 @@ class CacheSwapper:
                 info = self._info(conn, e)
                 if info.kind not in capture.GROUPS:
                     continue
-                out.append({"hex": e.hex, "kind": info.kind, "size": info.body_len, "atime": e.atime,
-                            "hits": e.hits, "bytes": e.size})
+                row = {"hex": e.hex, "kind": info.kind, "size": info.body_len, "atime": e.atime,
+                       "hits": e.hits, "bytes": e.size}
+                if info.kind == "rbxm":
+                    row["label"] = self._model_label(conn, e)
+                out.append(row)
             out.sort(key=lambda r: (-r["atime"], r["hex"]))
             return out
+
+    def _model_label(self, conn, entry: cache.Entry) -> str:
+        key = (entry.id, entry.size)
+        if key not in self._models:
+            from . import rbxm
+            try:
+                self._models[key] = rbxm.summarise(self.store.read_body(conn, entry.id)[0]).label
+            except Exception:
+                self._models[key] = "Model"
+        return self._models[key]
 
     def preview_entry(self, entry_hex: str) -> dict:
         """A data: URL to show (images, decoded textures) or play (sounds), if there is one."""
@@ -435,6 +460,15 @@ class CacheSwapper:
                 info["detail"] = f"can't preview ({exc})"
         elif kind in capture.AUDIO and len(body) <= 8 << 20:
             info["audio"] = f"data:{capture.AUDIO[kind]};base64,{base64.b64encode(body).decode()}"
+            from . import audio
+            info["detail"] = audio.describe(body)
+        elif kind == "rbxm":
+            from . import rbxm
+            try:
+                summary = rbxm.summarise(body)
+                info["detail"] = f"{summary.label}: {summary.describe()}"
+            except Exception as exc:
+                info["detail"] = f"can't read ({exc})"
         return info
 
     def mesh_entry(self, entry_hex: str) -> dict:
@@ -465,9 +499,8 @@ class CacheSwapper:
             return fit_image(data, original)
         if cache.verdict(original) != cache.CLEAR:
             return mesh_file_for(data, original)
-        new = cache.sniff(data)
-        if kind in ("ogg", "mp3", "wav") and new != kind:
-            raise Unavailable(f"pick a .{kind} sound to replace this one (Roblox keeps the format)")
+        if kind in ("ogg", "mp3", "wav"):
+            return sound_like(data, kind)
         return data
 
     def read_entry(self, entry_hex: str) -> bytes | None:
@@ -588,7 +621,9 @@ class CacheSwapper:
                 raise Unavailable(f"unknown swap type {swap.kind}")
             if cache.verdict(original) != cache.CLEAR and swap.kind != KIND_ASSET:
                 data = mesh_file_for(data, original)
-            if kind == "ktx2":
+            if kind in ("ogg", "mp3", "wav"):
+                data = sound_like(data, kind)
+            elif kind == "ktx2":
                 data = to_ktx2_like(data, original)
             elif kind in IMAGE_KINDS:
                 data = fit_image(data, original)

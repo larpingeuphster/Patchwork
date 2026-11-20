@@ -375,3 +375,5 @@ body.busy .power svg { animation: spin 1s linear infinite; }
 .cb-big-icon svg { width: 72px; height: 72px; }
 
 .cb-badge.cb-new { background: #2f9e6a; }
+
+.cb-icon-anim { color: #7ce0a6; }

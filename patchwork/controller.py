@@ -644,7 +644,7 @@ class Controller:
         replaced = self.captures.targets()
         manifest = self.runner.swapper.backups.manifest
         for r in rows:
-            r["group"] = capture.GROUPS.get(r["kind"], r["kind"])
+            r["group"] = r.get("label") or capture.GROUPS.get(r["kind"], r["kind"])
             r["fresh"] = mark is not None and mark.get(bytes.fromhex(r["hex"])) != (r["bytes"], r["atime"], r["hits"])
             r["replaced_by"] = replaced.get(r["hex"], "")
             rec = manifest.get(r["hex"])

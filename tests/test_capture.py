@@ -124,7 +124,7 @@ def test_cache_browser_replace_and_restore(setup, tmp_path):
     assert out.width == 32 and ktx2.decode(out).getpixel((4, 4))[2] > 200
     assert next(r for r in ctl.cache_browse()["rows"] if r["hex"] == tex_id.hex())["replaced_by"]
 
-    with pytest.raises(UserError, match="ogg"):
+    with pytest.raises(UserError, match="OGG, MP3"):
         ctl.cache_replace(ogg_id.hex(), str(pic))  # a picture can't replace a sound
 
     ctl.cache_restore(tex_id.hex())

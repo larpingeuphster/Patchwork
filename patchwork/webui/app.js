@@ -646,7 +646,10 @@
   const CB_GROUPS = { texture: ["ktx2", "ktx"], image: ["png", "webp", "jpg", "jpeg", "gif"], mesh: ["mesh"], rbxm: ["rbxm"], sound: ["ogg", "mp3", "wav"] };
   function cbVisible() {
     return CB.rows.filter((r) => CB.filter === "all" ? true : CB.filter === "replaced" ? !!r.replaced_by
-      : CB.filter === "fresh" ? r.fresh : (CB_GROUPS[CB.filter] || []).includes(r.kind));
+      : CB.filter === "fresh" ? r.fresh
+      : CB.filter === "anim" ? r.label === "Animation"
+      : CB.filter === "rbxm" ? r.kind === "rbxm" && r.label !== "Animation"
+      : (CB_GROUPS[CB.filter] || []).includes(r.kind));
   }
   const cbObserver = new IntersectionObserver((items) => {
     for (const it of items) if (it.isIntersecting) { cbObserver.unobserve(it.target); cbThumb(it.target); }
@@ -665,13 +668,14 @@
     sound: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none"/>',
     model: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" fill="none"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9" fill="none"/>',
     mesh: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" fill="none"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9M4 16.5L12 12l8 4.5" fill="none"/>',
+    anim: '<circle cx="13" cy="4.5" r="1.8"/><path d="M10 21l2-6-3-3 2-5 3 3h4M12 15l3 2v4M11 7L7 9l-1 3" fill="none"/>',
     image: '<rect x="4" y="5" width="16" height="14" rx="2" fill="none"/><circle cx="9" cy="10" r="1.6"/><path d="M5 17l5-5 4 4 2-2 3 3" fill="none"/>',
     other: '<path d="M7 3h7l4 4v14H7z" fill="none"/><path d="M14 3v4h4" fill="none"/>',
   };
-  function cbIcon(kind) {
-    const group = ["ogg", "mp3", "wav"].includes(kind) ? "sound" : kind === "rbxm" ? "model" : kind === "mesh" ? "mesh"
+  function cbIcon(kind, label) {
+    const group = ["ogg", "mp3", "wav"].includes(kind) ? "sound" : kind === "rbxm" ? (label === "Animation" ? "anim" : "model") : kind === "mesh" ? "mesh"
       : ["ktx2", "ktx", "png", "webp", "jpg", "jpeg", "gif"].includes(kind) ? "image" : "other";
-    return `<span class="cb-icon cb-icon-${group}"><svg viewBox="0 0 24 24" aria-hidden="true">${CB_ICONS[group]}</svg><em>${esc(kind.toUpperCase())}</em></span>`;
+    return `<span class="cb-icon cb-icon-${group}"><svg viewBox="0 0 24 24" aria-hidden="true">${CB_ICONS[group]}</svg><em>${esc(group === "anim" ? "ANIMATION" : kind.toUpperCase())}</em></span>`;
   }
   function renderCache() {
     const rows = cbVisible();
@@ -680,7 +684,7 @@
     if (!CB.loaded) { grid.innerHTML = `<p class="hint">Loading…</p>`; return; }
     if (!CB.rows.length) { grid.innerHTML = `<p class="hint">Roblox's cache is empty or wasn't found. Open RIVALS, then press Refresh.</p>`; $("#cb-more").hidden = true; return; }
     grid.innerHTML = rows.slice(0, CB.shown).map((r) => `<button class="cb-tile${r.replaced_by ? " replaced" : ""}" data-hex="${r.hex}">
-        <div class="cb-thumb">${cbIcon(r.kind)}</div>
+        <div class="cb-thumb">${cbIcon(r.kind, r.label)}</div>
         <div class="cb-meta"><b>${esc(r.group)}</b><span>${kb(r.size)}</span></div>
         ${r.replaced_by ? `<span class="cb-badge">Replaced</span>` : r.fresh ? `<span class="cb-badge cb-new">New</span>` : ""}</button>`).join("") || `<p class="hint">Nothing of that kind.</p>`;
     $("#cb-more").hidden = rows.length <= CB.shown;
@@ -729,8 +733,8 @@
     if (!p) { try { p = await api("cache_preview", { hex: row.hex }); CB.previews.set(row.hex, p); } catch { p = {}; } }
     const big = p.mesh ? `<div class="cb-big"><canvas class="mesh-view" width="560" height="560" title="Drag to turn it"></canvas></div><small class="mesh-hint">Drag to turn it</small>`
       : p.image ? `<div class="cb-big"><img src="${p.image}" alt=""></div>`
-      : p.audio ? `<div class="cb-big cb-big-icon">${cbIcon(row.kind)}</div><audio controls src="${p.audio}"></audio>`
-      : `<div class="cb-big cb-big-icon">${cbIcon(row.kind)}</div>`;
+      : p.audio ? `<div class="cb-big cb-big-icon">${cbIcon(row.kind, row.label)}</div><audio controls src="${p.audio}"></audio>`
+      : `<div class="cb-big cb-big-icon">${cbIcon(row.kind, row.label)}</div>`;
     const html = `<div class="cb-detail">${big}<small>${esc(row.group)} · ${kb(row.size)}${p.detail ? " · " + esc(p.detail) : ""}${row.replaced_by ? `<br>Replaced by <b>${esc(row.replaced_by)}</b>` : ""}</small></div>`;
     const buttons = [{ label: "Close", value: null }, { label: "Save a copy", value: "export" }];
     if (row.replaced_by && !row.replaced_by.startsWith("swap of")) buttons.push({ label: "Put original back", value: "restore", kind: "danger" });

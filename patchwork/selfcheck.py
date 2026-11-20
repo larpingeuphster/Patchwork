@@ -100,7 +100,25 @@ def run(report_path: str) -> int:
         mesh.render(mesh.parse(data), 32)
         return "Draco decode + render"
 
+    def sounds_and_models() -> str:
+        import io
+
+        import lz4.block
+        import numpy as np
+        import soundfile
+
+        from . import audio, rbxm
+        wav = io.BytesIO()
+        soundfile.write(wav, (np.sin(np.linspace(0, 300, 8000)) * 0.2).astype("float32"), 8000, format="WAV")
+        ogg = audio.convert(wav.getvalue(), "ogg")
+        if not ogg.startswith(b"OggS") or not audio.duration(ogg):
+            raise RuntimeError("OGG conversion failed")
+        lz4.block.compress(b"x" * 64)
+        rbxm.summarise(b'<roblox version="4"><Item class="KeyframeSequence"></Item></roblox>')
+        return f"libsndfile {soundfile.__libsndfile_version__}, OGG encode, LZ4"
+
     check("cache engine", cache_engine)
+    check("sounds and models", sounds_and_models)
     check("meshes", meshes)
     check("textures", textures)
     check("interface", ui)

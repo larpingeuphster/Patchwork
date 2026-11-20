@@ -36,3 +36,11 @@ rbxcache refuses to swap 3D content. Patchwork allows like-for-like swaps of mes
 ## DracoPy / Draco
 
 Patchwork uses [DracoPy](https://github.com/seung-lab/DracoPy) (Apache License 2.0), which wraps Google's [Draco](https://github.com/google/draco) (Apache License 2.0), to decompress Roblox meshes for previews.
+
+## soundfile / libsndfile
+
+Patchwork uses [soundfile](https://github.com/bastibe/python-soundfile) (BSD 3-Clause), which loads [libsndfile](https://github.com/libsndfile/libsndfile) (LGPL 2.1, shipped as a separate, replaceable DLL), to read and convert sounds.
+
+## lz4
+
+Patchwork uses [python-lz4](https://github.com/python-lz4/python-lz4) (BSD 3-Clause) to read compressed Roblox model files.
