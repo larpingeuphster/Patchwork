@@ -36,6 +36,7 @@ from .rules import Hit
 log = logging.getLogger("patchwork")
 
 _BLOB_NAME = re.compile(r"[0-9a-f]{32}")
+_HASH_IN_URL = re.compile(r"/([0-9a-f]{32})(?:/|$)")
 
 ASSET_URL = "https://assetdelivery.roblox.com/v1/asset/?id={id}"
 MAX_ASSET = 50 * 1024 * 1024
@@ -311,18 +312,57 @@ class CacheSwapper:
                 return None
 
     def report(self) -> list[str]:
-        """One line per cache entry: kind, size, category and address (without its access token)."""
+        """What's in the cache: per entry its id, kind, size, category, status, address and redirect
+        target (addresses without their access tokens). The top lines test how Roblox names cache
+        entries, which decides how textures can be matched. Nothing personal is included."""
+        import hashlib
         with self._lock:
             if not self.store.exists():
                 return ["Roblox's cache wasn't found."]
             conn = self._conn or self.store.connect()
             self._conn = conn
             entries = self.store.entries(conn)
-            lines = [f"Patchwork cache report: {len(entries)} entries", "kind\tbody_bytes\tcategory\tstatus\turl"]
+            ids = {e.id for e in entries}
+            infos = {e.id: self._info(conn, e) for e in entries}
+            tests: dict[str, int] = {}
+
+            def check(name: str, candidate: bytes | None) -> None:
+                tests.setdefault(name, 0)
+                if candidate is not None and candidate in ids:
+                    tests[name] += 1
+
+            redirects = 0
             for e in entries:
-                info = self._info(conn, e)
-                url = (info.url or "").split("?", 1)[0]
-                lines.append(f"{info.kind}\t{info.body_len}\t{e.category}\t{info.status}\t{url}")
+                info = infos[e.id]
+                if not info.url:
+                    continue
+                if 300 <= info.status < 400:
+                    redirects += 1
+                for label, url in (("url", info.url), ("location", info.location)):
+                    if not url:
+                        continue
+                    bare = url.split("?", 1)[0]
+                    m = _HASH_IN_URL.search(bare)
+                    check(f"{label}: id == hash in address", bytes.fromhex(m.group(1)) if m else None)
+                    for variant, text in (("full", url), ("no query", bare)):
+                        data = text.encode()
+                        check(f"{label}: id == md5({variant})", hashlib.md5(data).digest())
+                        check(f"{label}: id == sha1({variant})[:16]", hashlib.sha1(data).digest()[:16])
+                        check(f"{label}: id == sha256({variant})[:16]", hashlib.sha256(data).digest()[:16])
+                        try:
+                            import xxhash
+                            check(f"{label}: id == xxh128({variant})", xxhash.xxh128(data).digest())
+                            check(f"{label}: id == xxh3_128({variant})", xxhash.xxh3_128(data).digest())
+                        except (ImportError, AttributeError):
+                            pass
+            lines = [f"Patchwork {__version__} cache report: {len(entries)} entries, {redirects} redirects",
+                     "Naming tests (how many entries each rule finds):"]
+            lines += [f"  {n}\t{name}" for name, n in sorted(tests.items(), key=lambda kv: -kv[1])]
+            lines += ["", "id\tkind\tbody_bytes\tcategory\tstatus\turl\tlocation"]
+            for e in entries:
+                info = infos[e.id]
+                lines.append(f"{e.hex}\t{info.kind}\t{info.body_len}\t{e.category}\t{info.status}\t"
+                             f"{(info.url or '').split('?', 1)[0]}\t{(info.location or '').split('?', 1)[0]}")
             return lines
 
     # --- helpers ---------------------------------------------------------------------------
