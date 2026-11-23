@@ -511,7 +511,37 @@
     if (r.missing?.length) toast(`${plural(r.missing.length, "swap")} point at files that aren't on this PC. See Activity.`, { tone: "warn", ms: 7000 });
     if (r.skipped?.length) alertBox("Some rules were skipped", `Imported ${plural(r.count, "swap")}. Skipped ${r.skipped.length}:\n\n${r.skipped.slice(0, 15).join("\n")}`);
   }
-  $("#import-btn").addEventListener("click", importPreset);
+  async function importFolder(path) {
+    const args = path ? { path } : {};
+    let r;
+    try { r = await api("import_folder", args); } catch (e) { return alertBox("Can't import these configs", e.message); }
+    if (r.confirm === "links") {
+      const ok = await confirmBox("Import Fleasion configs",
+        `<p>${plural(r.configs, "config")} with <b>${r.count}</b> swaps. <b>${r.links}</b> of them download files from:</p>` +
+        `<ul>${r.hosts.map((h) => `<li><code>${esc(h)}</code></li>`).join("")}</ul><p>Only import configs from people you trust.</p>`, "Import");
+      if (!ok) return;
+      try { r = await api("import_folder", { ...args, confirmed: true }); } catch (e) { return alertBox("Can't import these configs", e.message); }
+    }
+    await refresh();
+    toast(`Imported ${plural(r.names.length, "config")} (${plural(r.count, "swap")})`);
+    if (r.missing?.length) toast(`${plural(r.missing.length, "swap")} point at files that aren't on this PC. See Activity.`, { tone: "warn", ms: 7000 });
+    if (r.skipped?.length) alertBox("Some rules were skipped", `Imported ${r.names.join(", ")}. Skipped ${r.skipped.length}:\n\n${r.skipped.slice(0, 15).join("\n")}`);
+  }
+  $("#import-btn").addEventListener("click", async () => {
+    const buttons = [{ label: "Cancel", value: null }, { label: "Configs folder…", value: "folder" }];
+    if (S.fleasion_dir) buttons.push({ label: "From Fleasion on this PC", value: "fleasion" });
+    buttons.push({ label: "Preset file…", value: "file", kind: "primary" });
+    const choice = await modal({
+      title: "Import",
+      html: "<p><b>Preset file:</b> one Patchwork or Fleasion <code>.json</code>.</p>" +
+        "<p><b>Configs folder:</b> a Fleasion <code>configs</code> folder (or a shared pack), with its asset folders. Each config becomes a profile.</p>" +
+        (S.fleasion_dir ? `<p><b>From Fleasion:</b> every config in <code>${esc(S.fleasion_dir)}</code>, switched on the way Fleasion has them.</p>` : ""),
+      buttons,
+    });
+    if (choice === "file") importPreset();
+    else if (choice === "fleasion") importFolder("");
+    else if (choice === "folder") { const path = await act("pick_file", { kind: "folder" }); if (path) importFolder(path); }
+  });
   $$("#dd-export .dd-menu button").forEach((b) => b.addEventListener("click", async () => {
     closeMenus();
     const path = await act("pick_file", { kind: "preset", save: true, default_name: `${S.editing}.json` });

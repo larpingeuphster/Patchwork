@@ -73,6 +73,8 @@ def _tk_file_dialog(kind: str, save: bool, default_name: str) -> str | None:
     root.attributes("-topmost", True)
     types = _dialog_types(kind)
     try:
+        if kind == "folder":
+            return filedialog.askdirectory() or None
         if save:
             return filedialog.asksaveasfilename(defaultextension=".json", initialfile=default_name,
                                                 filetypes=types) or None
@@ -200,7 +202,9 @@ def main(argv: list[str] | None = None) -> None:
 
     def native_dialog(kind: str, save: bool, default_name: str) -> str | None:
         types = tuple(f"{label} ({pattern.replace(' ', ';')})" for label, pattern in _dialog_types(kind))
-        if save:
+        if kind == "folder":
+            result = window.create_file_dialog(webview.FOLDER_DIALOG)
+        elif save:
             result = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=default_name, file_types=types)
         else:
             result = window.create_file_dialog(webview.OPEN_DIALOG, file_types=types)

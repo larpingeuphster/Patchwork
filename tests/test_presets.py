@@ -25,17 +25,17 @@ def test_real_fleasion_preset():
 
 def test_fleasion_unknown_modes_and_bad_rules_are_skipped():
     data = {"replacement_rules": [
-        {"name": "ok", "replace_ids": ["5"], "mode": "id", "with_id": "6"},
+        {"name": "ok", "replace_ids": ["5"], "mode": "id", "with_id": "600"},
         {"name": "gone", "replace_ids": [1], "mode": "remove"},
         {"name": "bad", "replace_ids": [], "mode": "id", "with_id": 1},
         {"name": "badurl", "replace_ids": [1], "mode": "cdn", "cdn_url": "ftp://x"},
         "junk",
     ]}
     result = presets.parse_preset(data)
-    assert [s.name for s in result.swaps] == ["ok"]
-    assert result.swaps[0].targets == [5] and result.swaps[0].value == "6"
-    assert len(result.skipped) == 4
-    assert 'mode "remove"' in result.skipped[0]
+    assert [s.name for s in result.swaps] == ["ok", "gone"]
+    assert result.swaps[0].targets == [5] and result.swaps[0].value == "600"
+    assert result.swaps[1].kind == KIND_REMOVE
+    assert len(result.skipped) == 3
 
 
 def test_round_trips(tmp_path):
@@ -100,7 +100,7 @@ def test_patchwork_relative_files(tmp_path):
     assert Path(swap.value) == (tmp_path / "Sky" / "up.png").resolve()
 
 
-@pytest.mark.parametrize("text", ["not json", "[]", '{"other": 1}', '{"replacement_rules": 5}'])
+@pytest.mark.parametrize("text", ["not json", "[1, 2]", '{"other": 1}', '{"replacement_rules": 5}'])
 def test_bad_files(tmp_path, text):
     p = tmp_path / "x.json"
     p.write_text(text)
@@ -129,3 +129,60 @@ def test_swap_from_inputs(tmp_path):
     for ids, value in (("", "5"), ("1", ""), ("1", "/nope.png"), ("abc", "5")):
         with pytest.raises(ValueError):
             swap_from_inputs("", ids, value, cfg)
+
+
+# --- the Fleasion rewrite (feat/rewrite-ui-v2) -------------------------------------------------
+
+
+def test_rewrite_rules(tmp_path):
+    (tmp_path / "StickObj").mkdir()
+    (tmp_path / "StickObj" / "stick.obj").write_text("v 0 0 0")
+    data = [  # a bare list of rules is a config too
+        {"name": "no mode means id", "replace_ids": [10], "with_id": 999},
+        {"name": "legacy remove flag", "replace_ids": ["11"], "remove": True},
+        {"name": "pack file", "replace_ids": [12], "mode": "local", "local_path": "/StickObj/stick.obj"},
+        {"name": "empty cdn removes", "replace_ids": [13], "mode": "cdn", "cdn_url": ""},
+        {"name": "off", "replace_ids": [14], "mode": "id", "with_id": 998, "enabled": False},
+        {"name": "words", "replace_ids": ["Image", "15", "3:4"], "mode": "id", "with_id": 997},
+        {"name": "reserved", "replace_ids": [16], "mode": "id", "with_id": 13},
+        {"name": "filtered", "replace_ids": [17], "mode": "cdn", "cdn_url": "https://x.test/a.png",
+         "filters": {"min_kb": 5}},
+        {"type": "group", "name": "Bow", "expanded": True, "children": [
+            {"name": "string", "replace_ids": [18], "mode": "remove"},
+        ]},
+    ]
+    p = tmp_path / "Sticks.json"
+    p.write_text(json.dumps(data), encoding="utf-16")  # Fleasion recovers non-UTF-8 files too
+    r = presets.load_preset(p)
+    by = {s.name: s for s in r.swaps}
+    assert by["no mode means id"].kind == KIND_ASSET and by["no mode means id"].value == "999"
+    assert by["legacy remove flag"].kind == KIND_REMOVE and by["empty cdn removes"].kind == KIND_REMOVE
+    assert Path(by["pack file"].value) == tmp_path / "StickObj" / "stick.obj" and not r.missing_files
+    assert by["off"].enabled is False
+    assert by["words"].targets == [15]
+    assert "reserved" not in by
+    assert by["Bow / string"].kind == KIND_REMOVE
+    assert by["filtered"].kind == KIND_URL
+    joined = "\n".join(r.skipped)
+    assert '"Image"' in joined and '"3:4"' in joined and "with_id 13" in joined and "filters" in joined
+
+
+def test_configs_folder(tmp_path):
+    configs = tmp_path / "FleasionNT" / "configs"
+    (configs / "Pack").mkdir(parents=True)
+    (configs / "A.json").write_text(json.dumps({"replacement_rules": [{"name": "a", "replace_ids": [1], "with_id": 100}]}))
+    (configs / "B.json").write_text(json.dumps({"replacement_rules": []}))
+    (configs / "Pack" / "nested.json").write_text("{}")  # nested JSON is an asset, not a config
+    (configs / "Broken.json").write_text("{")
+    (configs.parent / "settings.json").write_text(json.dumps({"enabled_configs": ["A"]}))
+    found, enabled = presets.load_folder(configs)
+    assert [n for n, _ in found] == ["A", "B", "Broken"]
+    assert enabled == ["A"]
+    assert found[0][1].swaps[0].value == "100" and found[2][1].skipped
+
+
+def test_fleasion_configs_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert presets.fleasion_configs_dir() is None
+    (tmp_path / "FleasionNT" / "configs").mkdir(parents=True)
+    assert presets.fleasion_configs_dir() == tmp_path / "FleasionNT" / "configs"

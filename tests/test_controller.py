@@ -235,3 +235,39 @@ def test_clear_cache_keeps_swaps_and_works_with_roblox_open(tmp_path, monkeypatc
         assert not closed  # Roblox didn't need closing
     finally:
         ctl.shutdown()
+
+
+def test_import_fleasion_configs_folder(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    configs = tmp_path / "local" / "FleasionNT" / "configs"
+    (configs / "Sky").mkdir(parents=True)
+    (configs / "Sky" / "up.png").write_bytes(b"x")
+    (configs / "Skybox.json").write_text(json.dumps({"replacement_rules": [
+        {"name": "up", "replace_ids": [1001], "mode": "local", "local_path": "/Sky/up.png"}]}))
+    (configs / "Links.json").write_text(json.dumps({"replacement_rules": [
+        {"name": "web", "replace_ids": [1002], "mode": "cdn", "cdn_url": "https://example.test/a.png"}]}))
+    (configs.parent / "settings.json").write_text(json.dumps({"enabled_configs": ["Skybox"]}))
+    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=tmp_path / "nocache")
+    try:
+        assert ctl.snapshot()["fleasion_dir"] == str(configs)
+        r = ctl.import_folder()
+        assert r["confirm"] == "links" and r["hosts"] == ["example.test"] and r["configs"] == 2
+        r = ctl.import_folder(confirmed=True)
+        assert sorted(r["names"]) == ["Links", "Skybox"] and r["count"] == 2 and not r["missing"]
+        profiles = {p["name"]: p for p in ctl.snapshot()["profiles"]}
+        assert profiles["Skybox"]["enabled"] and not profiles["Links"]["enabled"]  # as Fleasion had them
+        sky = ctl.store.profiles["Skybox"][0]
+        assert sky.kind == "file" and sky.value == str(configs / "Sky" / "up.png")
+    finally:
+        ctl.shutdown()
+
+
+def test_import_folder_without_fleasion(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    ctl = Controller(home=tmp_path / "home", log_dir=tmp_path / "logs", cache_dir=tmp_path / "nocache")
+    try:
+        with pytest.raises(UserError, match="wasn't found"):
+            ctl.import_folder()
+    finally:
+        ctl.shutdown()

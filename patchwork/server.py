@@ -28,7 +28,7 @@ API_METHODS = {
     "select_profile", "set_profile_enabled", "new_profile", "duplicate_profile", "rename_profile",
     "delete_profile",
     "save_swap", "set_swaps_enabled", "remove_swaps", "undo",
-    "pick_file", "import_preset", "export_preset",
+    "pick_file", "import_preset", "import_folder", "export_preset",
     "start", "stop", "clear_cache", "clear_downloads", "restore_cache",
     "set_setting", "accept_notice", "open_folder",
     "capture_start", "capture_stop", "capture_state", "capture_save", "capture_toggle", "capture_delete",

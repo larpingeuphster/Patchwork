@@ -4,9 +4,12 @@ Two formats are understood:
 
 * Patchwork's own: ``{"patchwork_preset": 1, "swaps": [...]}`` (the same swap
   fields as config.json; a full config.json imports too).
-* Fleasion's: ``{"replacement_rules": [...]}``, where each rule has ``name``,
-  ``replace_ids``, ``enabled`` and a ``mode`` of ``"id"`` (``with_id``) or
-  ``"cdn"`` (``cdn_url``). Other Fleasion modes are reported as skipped.
+* Fleasion's, old and rewrite (``{"replacement_rules": [...]}`` or a bare list of
+  rules): rules have ``name``, ``replace_ids``, ``enabled`` and a ``mode`` of
+  ``"id"`` (``with_id``), ``"cdn"`` (``cdn_url``), ``"local"`` (``local_path``) or
+  ``"remove"``; groups are ``{"type": "group", "children": [...]}``. Local paths
+  like ``/Folder/file.obj`` point into the configs folder the JSON came from.
+  Whole configs folders (the rewrite's ``configs/``) import one profile per file.
 """
 
 from __future__ import annotations
@@ -45,27 +48,91 @@ def _ids(value) -> list:
     return list(value) if isinstance(value, list) else []
 
 
-def _fleasion_rule(rule: dict, name: str, result: ImportResult) -> None:
-    mode = str(rule.get("mode", "")).lower()
+def fleasion_configs_dir() -> Path | None:
+    """The new Fleasion's configs folder on this PC (%LOCALAPPDATA%\\FleasionNT\\configs), if it exists."""
+    import os
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return None
+    folder = Path(local) / "FleasionNT" / "configs"
+    return folder if folder.is_dir() else None
+
+
+def _resolve_local(path: str, base_dir: Path | None) -> Path:
+    """A Fleasion local_path. ``/Folder/file.ext`` means a file in the configs folder the JSON came
+    from (or Fleasion's own configs folder); anything else is a normal path on this PC."""
+    raw = path.replace("\\", "/")
+    parts = [p for p in raw.split("/") if p]
+    portable = raw.startswith("/") and len(parts) >= 2 and not any(p in (".", "..") for p in parts) \
+        and ":" not in parts[0]
+    candidates = []
+    if portable:
+        for root in (base_dir, fleasion_configs_dir()):
+            if root is not None:
+                candidates.append(root.joinpath(*parts))
+    candidates.append(Path(path))
+    for c in candidates:
+        if c.is_file():
+            return c
+    return candidates[0]
+
+
+def _fleasion_targets(rule: dict, name: str, result: ImportResult) -> list[int]:
+    targets = []
+    for raw in _ids(rule.get("replace_ids")):
+        if isinstance(raw, bool):
+            continue
+        text = str(raw).strip()
+        if text.isdigit():
+            targets.append(int(text))
+        elif text:
+            # Asset-type words ("Image", "TexturePack"...) mean "every asset of that type"; Patchwork
+            # swaps specific files, so those can't be applied.
+            result.skipped.append(f'{name}: target "{text}" (a whole asset type) isn\'t supported')
+    return targets
+
+
+def _fleasion_rule(rule: dict, name: str, result: ImportResult, base_dir: Path | None = None) -> None:
+    mode = str(rule.get("mode", "")).strip().lower()
+    if not mode:
+        # The rewrite defaults to "id"; older files used a remove flag instead of a mode.
+        mode = "remove" if rule.get("remove") is True else "id"
     try:
-        targets = [int(str(t).strip()) for t in _ids(rule.get("replace_ids"))]
-        enabled = bool(rule.get("enabled", True))
-        if mode == "id":
+        targets = _fleasion_targets(rule, name, result)
+        if not targets:
+            if not any(r.startswith(f"{name}:") for r in result.skipped):
+                result.skipped.append(f"{name}: no asset IDs to replace")
+            return
+        enabled = rule.get("enabled", True) is not False
+        if rule.get("filters"):
+            result.skipped.append(f"{name}: its size/length filters were ignored (the swap applies to its IDs "
+                                  "regardless)")
+        if mode == "remove":
+            swap = Swap(name, targets, KIND_REMOVE, "", enabled)
+        elif mode == "id":
             with_id = str(rule.get("with_id") or "").strip()
             if with_id in ("", "0", "-1", "None"):
-                # Fleasion's "remove": an ID rule with nothing to replace it with.
+                # An ID rule with nothing to replace it with removes the asset.
                 swap = Swap(name, targets, KIND_REMOVE, "", enabled)
+            elif with_id.isdigit() and int(with_id) <= 80:
+                result.skipped.append(f"{name}: with_id {with_id} isn't an asset ID")
+                return
             else:
                 swap = Swap(name, targets, KIND_ASSET, with_id, enabled)
         elif mode == "cdn":
-            swap = Swap(name, targets, KIND_URL, str(rule.get("cdn_url", "")).strip(), enabled)
+            url = str(rule.get("cdn_url") or "").strip()
+            swap = Swap(name, targets, KIND_URL, url, enabled) if url else Swap(name, targets, KIND_REMOVE, "", enabled)
         elif mode == "local":
-            path = str(rule.get("local_path", "")).strip()
-            swap = Swap(name, targets, KIND_FILE, path, enabled)
-            if not Path(path).is_file():
-                result.missing_files.append(f"{name}: {path}")
+            path = str(rule.get("local_path") or "").strip()
+            if not path:
+                swap = Swap(name, targets, KIND_REMOVE, "", enabled)
+            else:
+                found = _resolve_local(path, base_dir)
+                swap = Swap(name, targets, KIND_FILE, str(found), enabled)
+                if not found.is_file():
+                    result.missing_files.append(f"{name}: {path}")
         else:
-            result.skipped.append(f'{name}: mode "{mode or "?"}" isn\'t supported yet')
+            result.skipped.append(f'{name}: mode "{mode}" isn\'t supported yet')
             return
     except (ValueError, TypeError) as exc:
         result.skipped.append(f"{name}: {exc}")
@@ -73,7 +140,8 @@ def _fleasion_rule(rule: dict, name: str, result: ImportResult) -> None:
     result.swaps.append(swap)
 
 
-def _fleasion_rules(rules: list, result: ImportResult, prefix: str = "", depth: int = 0) -> None:
+def _fleasion_rules(rules: list, result: ImportResult, prefix: str = "", depth: int = 0,
+                    base_dir: Path | None = None) -> None:
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             result.skipped.append(f"{prefix}Rule {index + 1}: not a rule")
@@ -83,19 +151,19 @@ def _fleasion_rules(rules: list, result: ImportResult, prefix: str = "", depth: 
             children = rule.get("children")
             if isinstance(children, list) and depth < 10:
                 # Groups are folders of rules; their names prefix the rules inside.
-                _fleasion_rules(children, result, f"{name} / ", depth + 1)
+                _fleasion_rules(children, result, f"{name} / ", depth + 1, base_dir)
             else:
                 result.skipped.append(f"{name}: empty or unreadable group")
             continue
-        _fleasion_rule(rule, name, result)
+        _fleasion_rule(rule, name, result, base_dir)
 
 
-def parse_fleasion(data: dict) -> ImportResult:
+def parse_fleasion(data, base_dir: Path | None = None) -> ImportResult:
     result = ImportResult(FORMAT_FLEASION)
-    rules = data.get("replacement_rules")
+    rules = data if isinstance(data, list) else data.get("replacement_rules")
     if not isinstance(rules, list):
         raise ValueError("replacement_rules should be a list")
-    _fleasion_rules(rules, result)
+    _fleasion_rules(rules, result, base_dir=base_dir)
     return result
 
 
@@ -124,20 +192,57 @@ def parse_patchwork(data: dict, base_dir: Path | None = None) -> ImportResult:
 
 
 def parse_preset(data: object, base_dir: Path | None = None) -> ImportResult:
+    if isinstance(data, list) and all(isinstance(r, dict) for r in data):
+        return parse_fleasion(data, base_dir)  # the rewrite accepts a bare list of rules
     if not isinstance(data, dict):
         raise ValueError("This file isn't a swap preset.")
     if "replacement_rules" in data:
-        return parse_fleasion(data)
+        return parse_fleasion(data, base_dir)
     if "swaps" in data:
         return parse_patchwork(data, base_dir)
     raise ValueError("This file isn't a Patchwork or Fleasion preset (no swaps or replacement_rules).")
 
 
-def load_preset(path: Path) -> ImportResult:
+def _read_json(path: Path):
+    raw = path.read_bytes()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        encodings = ["utf-16"]
+    else:
+        encodings = ["utf-8-sig", "cp1252"]
+    error = None
+    for enc in encodings:
+        try:
+            return json.loads(raw.decode(enc))
+        except UnicodeDecodeError as exc:
+            error = exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"This file isn't valid JSON (line {exc.lineno}): {exc.msg}") from exc
+    raise ValueError(f"This file's text encoding can't be read: {error}")
+
+
+def load_folder(folder: Path) -> tuple[list[tuple[str, ImportResult]], list[str]]:
+    """Every config in a Fleasion configs folder: (name, result) per root .json, plus the
+    names Fleasion has switched on (from settings.json beside the folder, if there is one)."""
+    configs = []
+    for path in sorted(folder.glob("*.json"), key=lambda p: p.name.lower()):
+        try:
+            configs.append((path.stem, load_preset(path)))
+        except (ValueError, OSError) as exc:
+            empty = ImportResult(FORMAT_FLEASION)
+            empty.skipped.append(f"{path.name}: {exc}")
+            configs.append((path.stem, empty))
+    enabled: list[str] = []
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"This file isn't valid JSON (line {exc.lineno}): {exc.msg}") from exc
+        settings = _read_json(folder.parent / "settings.json")
+        if isinstance(settings, dict) and isinstance(settings.get("enabled_configs"), list):
+            enabled = [str(n) for n in settings["enabled_configs"]]
+    except (ValueError, OSError):
+        pass
+    return configs, enabled
+
+
+def load_preset(path: Path) -> ImportResult:
+    data = _read_json(path)
     return parse_preset(data, path.parent)
 
 

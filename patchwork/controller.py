@@ -185,6 +185,7 @@ class Controller:
                 "paths": {"home": str(self.home), "configs": str(store.configs_dir)},
                 "rivals": {"name": games.RIVALS_NAME, "place_id": games.RIVALS_PLACE_ID},
                 "can_undo": bool(store._undo),
+                "fleasion_dir": str(presets.fleasion_configs_dir() or ""),
                 "cache": {"path": str(self.runner.store.directory), "found": self.runner.store.exists()},
                 "asset_states": {str(k): v for k, v in self.runner.swapper.state.items()},
                 "captures": [{"name": c.name, "enabled": c.enabled, "files": len(c.pairs)}
@@ -369,6 +370,44 @@ class Controller:
             self.log(f"File not found on this PC (swap kept, it won't apply until the file exists): {missing}", "warn")
         return {"name": name, "count": len(result.swaps), "skipped": result.skipped,
                 "missing": result.missing_files}
+
+    def import_folder(self, path: str = "", confirmed: bool = False) -> dict:
+        """Import a Fleasion configs folder (the rewrite's configs/): one profile per config file,
+        switched on the way Fleasion has them. Without a path, Fleasion's own folder on this PC."""
+        folder = Path(path) if path else presets.fleasion_configs_dir()
+        if folder is None or not folder.is_dir():
+            raise UserError("Fleasion's configs folder wasn't found on this PC. Pick the folder instead.")
+        try:
+            configs, fleasion_on = presets.load_folder(folder)
+        except OSError as exc:
+            raise UserError(f"Couldn't read {folder}: {exc}") from exc
+        usable = [(n, r) for n, r in configs if r.swaps]
+        if not usable:
+            skipped = [s for _, r in configs for s in r.skipped]
+            raise UserError(f"No usable configs in {folder}." + ("\n\n" + "\n".join(skipped[:15]) if skipped else ""))
+        hosts = sorted({h for _, r in usable for h in r.link_hosts()})
+        total = sum(len(r.swaps) for _, r in usable)
+        if hosts and not confirmed:
+            links = sum(1 for _, r in usable for s in r.swaps if s.kind == KIND_URL)
+            return {"confirm": "links", "format": "Fleasion", "count": total, "configs": len(usable),
+                    "links": links, "hosts": hosts}
+        names, skipped, missing = [], [], []
+        with self._lock:
+            self.store.checkpoint()
+            for config_name, result in usable:
+                name = self.store.create(config_name, result.swaps)
+                self.store.set_enabled(name, config_name in fleasion_on if fleasion_on else True)
+                names.append(name)
+                skipped += [f"{config_name}: {x}" for x in result.skipped]
+                missing += [f"{config_name}: {x}" for x in result.missing_files]
+            self._save()
+        skipped += [f"{n}: {x}" for n, r in configs if not r.swaps for x in (r.skipped or ["no usable rules"])]
+        self.log(f"Imported {len(names)} Fleasion config(s) from {folder} ({total} swaps): " + ", ".join(names) + ".")
+        for reason in skipped:
+            self.log(f"Skipped {reason}", "warn")
+        for m in missing:
+            self.log(f"File not found on this PC (swap kept, it won't apply until the file exists): {m}", "warn")
+        return {"names": names, "count": total, "skipped": skipped, "missing": missing}
 
     def export_preset(self, fmt: str, path: str) -> dict:
         with self._lock:
