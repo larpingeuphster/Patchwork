@@ -58,7 +58,7 @@ def fleasion_configs_dir() -> Path | None:
     return folder if folder.is_dir() else None
 
 
-def _resolve_local(path: str, base_dir: Path | None) -> Path:
+def _resolve_local(path: str, base_dir: Path | None) -> str:
     """A Fleasion local_path. ``/Folder/file.ext`` means a file in the configs folder the JSON came
     from (or Fleasion's own configs folder); anything else is a normal path on this PC."""
     raw = path.replace("\\", "/")
@@ -73,8 +73,9 @@ def _resolve_local(path: str, base_dir: Path | None) -> Path:
     candidates.append(Path(path))
     for c in candidates:
         if c.is_file():
-            return c
-    return candidates[0]
+            return str(c)
+    # Not on this PC: keep a normal path exactly as written; a pack path points into its folder.
+    return str(candidates[0]) if portable and len(candidates) > 1 else path
 
 
 def _fleasion_targets(rule: dict, name: str, result: ImportResult) -> list[int]:
@@ -128,8 +129,8 @@ def _fleasion_rule(rule: dict, name: str, result: ImportResult, base_dir: Path |
                 swap = Swap(name, targets, KIND_REMOVE, "", enabled)
             else:
                 found = _resolve_local(path, base_dir)
-                swap = Swap(name, targets, KIND_FILE, str(found), enabled)
-                if not found.is_file():
+                swap = Swap(name, targets, KIND_FILE, found, enabled)
+                if not Path(found).is_file():
                     result.missing_files.append(f"{name}: {path}")
         else:
             result.skipped.append(f'{name}: mode "{mode}" isn\'t supported yet')
