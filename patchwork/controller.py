@@ -449,6 +449,7 @@ class Controller:
                 self.log(f"Roblox's cache isn't at {self.runner.store.directory} yet. Open Roblox once and "
                          "Patchwork picks it up.", "warn")
             self.log(f"Patchwork is running. Play {games.RIVALS_NAME}: swaps apply as Roblox downloads assets.")
+            self._check_conflicts()
             self._last_summary = None
             self._schedule_summary()
         self._changed()
@@ -525,7 +526,27 @@ class Controller:
             self._last_game = now
             suffix = ""
             self.log(f"Roblox: {state.describe()}{suffix}", "game")
+            if state.in_game:
+                threading.Thread(target=self._check_conflicts, daemon=True).start()
         self._changed()
+
+    def _check_conflicts(self) -> None:
+        """Warn (once per finding) about things on this PC that undo or block Patchwork's swaps."""
+        seen = self.__dict__.setdefault("_conflicts_seen", set())
+        for name in roblox.other_swappers():
+            if ("proc", name) not in seen:
+                seen.add(("proc", name))
+                self.log(f"{name} is running. Fleasion can delete Roblox's cache when it starts (its "
+                         "\"Clear Cache on Launch\"), which wipes Patchwork's swaps, and its proxy changes "
+                         "Roblox's downloads too. Quit Fleasion completely while you use Patchwork.", "warn")
+        hosts = roblox.hosts_redirects()
+        if hosts and ("hosts", tuple(hosts)) not in seen:
+            seen.add(("hosts", tuple(hosts)))
+            shown = ", ".join(hosts[:4]) + (f" and {len(hosts) - 4} more" if len(hosts) > 4 else "")
+            self.log(f"Windows' hosts file redirects Roblox's servers ({shown}), probably left by Fleasion's "
+                     "Hosts File mode. Patchwork can't look assets up while it does. Turn that mode off in "
+                     "Fleasion (or remove those lines from C:\\Windows\\System32\\drivers\\etc\\hosts) and "
+                     "restart your PC.", "warn")
 
     # ----- maintenance --------------------------------------------------------------
 

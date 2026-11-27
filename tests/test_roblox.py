@@ -173,3 +173,11 @@ def test_root_for_exe():
     from pathlib import Path
     exe = Path("C:/Users/x/AppData/Local/Froststrap/Versions/version-1/RobloxPlayerBeta.exe")
     assert roblox.root_for_exe(exe) == Path("C:/Users/x/AppData/Local/Froststrap/Versions")
+
+
+def test_hosts_redirects(tmp_path):
+    hosts = tmp_path / "hosts"
+    hosts.write_text("# comment 127.0.0.1 assetdelivery.roblox.com\n127.0.0.1 localhost\n"
+                     "127.0.0.1 assetdelivery.roblox.com fts.rbxcdn.com # fleasion\n::1 assetdelivery.roblox.com\n")
+    assert roblox.hosts_redirects(hosts) == ["assetdelivery.roblox.com", "fts.rbxcdn.com"]
+    assert roblox.hosts_redirects(tmp_path / "missing") == []

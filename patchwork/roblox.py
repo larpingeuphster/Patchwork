@@ -411,6 +411,43 @@ def running_clients(processes: tuple[str, ...] = CLIENT_EXES) -> list[str]:
     return sorted(running)
 
 
+def hosts_redirects(path: Path | None = None) -> list[str]:
+    """Roblox hosts that the Windows hosts file sends somewhere else (other swappers do this),
+    which stops Patchwork reaching Roblox to look assets up."""
+    if path is None:
+        root = _env_path("SystemRoot") or Path("C:/Windows")
+        path = root / "System32" / "drivers" / "etc" / "hosts"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    found = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        for host in line.split()[1:]:
+            h = host.lower()
+            if (h.endswith("roblox.com") or h.endswith("rbxcdn.com")) and h not in found:
+                found.append(h)
+    return found
+
+
+def other_swappers() -> list[str]:
+    """Running programs that also change Roblox's assets (and may clear its cache or reroute it)."""
+    if sys.platform != "win32":
+        return []
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = set()
+    for line in out.splitlines():
+        name = line.split(",", 1)[0].strip('"')
+        if "fleasion" in name.lower():
+            names.add(name)
+    return sorted(names)
+
+
 def client_paths(processes: tuple[str, ...] = CLIENT_EXES) -> list[Path]:
     """Full paths of the running Roblox executables (Windows only)."""
     if sys.platform != "win32":

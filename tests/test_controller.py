@@ -271,3 +271,14 @@ def test_import_folder_without_fleasion(tmp_path, monkeypatch):
             ctl.import_folder()
     finally:
         ctl.shutdown()
+
+
+def test_conflicts_are_reported_once(ctl, monkeypatch):
+    from patchwork import roblox
+    monkeypatch.setattr(roblox, "other_swappers", lambda: ["Fleasion.exe"])
+    monkeypatch.setattr(roblox, "hosts_redirects", lambda: ["assetdelivery.roblox.com"])
+    ctl._check_conflicts()
+    ctl._check_conflicts()
+    text = [e["text"] for e in ctl.activity_log()] if hasattr(ctl, "activity_log") else []
+    joined = "\n".join(text)
+    assert joined.count("Fleasion.exe is running") == 1 and joined.count("hosts file redirects") == 1
